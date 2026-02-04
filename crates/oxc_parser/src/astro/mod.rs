@@ -1134,6 +1134,94 @@ const name = "World";
     }
 
     #[test]
+    fn parse_astro_attribute_with_colon_self_closing() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div :class="hey" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one element
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            // Should have one attribute
+            assert_eq!(element.opening_element.attributes.len(), 1);
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_attribute_with_colon_not_self_closing() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div :class="hey"></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one element
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            // Should have one attribute
+            assert_eq!(element.opening_element.attributes.len(), 1);
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_attribute_colon_with_space_two_attrs() {
+        // In Astro: `<div : hello>` is two attributes: `:` and `hello`
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<div : hello></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one element
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            // Should have TWO attributes: `:` and `hello`
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                2,
+                "Expected 2 attributes, got {:?}",
+                element.opening_element.attributes
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_attribute_colon_no_space_one_attr() {
+        // In Astro: `<div :hello>` is one attribute: `:hello`
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<div :hello></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one element
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            // Should have ONE attribute: `:hello`
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                1,
+                "Expected 1 attribute, got {:?}",
+                element.opening_element.attributes
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
     fn parse_astro_attribute_with_dot() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
@@ -2910,5 +2998,865 @@ interface User { name: string }
                 panic!("Expected AstroScript");
             }
         }
+    }
+
+    // ==========================================
+    // Astro Compiler Compatibility Tests
+    // ==========================================
+    // These tests are ported from @astrojs/compiler test suite to ensure
+    // the oxc Astro parser can handle the same inputs.
+    // Source: https://github.com/withastro/compiler/tree/main/packages/compiler/test
+
+    // --- From test/basic/expressions.ts ---
+    #[test]
+    fn compiler_compat_less_than_inside_jsx_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Layout>
+   {
+      new Array(totalPages).fill(0).map((_, index) => {
+        const active = currentPage === index;
+        if (
+          totalPages > 25 &&
+          ( index < currentPage - offset ||
+            index > currentPage + offset)
+        ) {
+          return 'HAAAA';
+        }
+      })
+    }
+</Layout>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/basic/lt-gt-text.ts ---
+    // In Astro/HTML, `<` followed by whitespace or non-letter is text, not a tag start.
+    // The lexer checks if `<` is followed by ASCII letter, `/`, `>`, or `!` to determine
+    // if it's a tag. Otherwise, it's treated as text content.
+    #[test]
+    fn compiler_compat_lt_gt_as_raw_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"---
+import MainHead from '../components/MainHead.astro';
+---
+
+<html lang="en">
+    <head>
+        <MainHead title="Test" />
+    </head>
+    <body>
+        <small>< header ></small>
+    </body>
+</html>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/basic/comment.ts ---
+    #[test]
+    fn compiler_compat_html_comments() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<!-- This is a comment --><div>Hello</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/basic/fragment.ts ---
+    #[test]
+    fn compiler_compat_fragment_shorthand() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<>Hello</>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::Fragment(_)));
+    }
+
+    #[test]
+    fn compiler_compat_fragment_literal() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Fragment>World</Fragment>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/parse/fragment.ts ---
+    #[test]
+    fn compiler_compat_both_fragment_types() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<>Hello</><Fragment>World</Fragment>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    // --- From test/parse/ast.ts ---
+    #[test]
+    fn compiler_compat_basic_ast_structure() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"
+---
+let value = 'world';
+---
+
+<h1 name="value" empty {shorthand} expression={true} literal=`tags`>Hello {value}</h1>
+<div></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(ret.root.frontmatter.is_some());
+    }
+
+    // --- From test/parse/literal.ts ---
+    #[test]
+    fn compiler_compat_style_tag_position_i() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<html><body><h1>Hello world!</h1></body></html>\n<style></style>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_style_tag_position_ii() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<html></html>\n<style></style>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_style_tag_position_iii() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<html lang="en"><head><BaseHead /></head></html>
+<style>@use "../styles/global.scss";</style>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/parse/multibyte-characters.ts ---
+    #[test]
+    fn compiler_compat_multibyte_characters() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div>こんにちは世界</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_multibyte_in_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{items.map(item => <span>日本語: {item}</span>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/tsx/basic.ts ---
+    #[test]
+    fn compiler_compat_at_attributes() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div @click={() => {}} name="value"></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_attributes_with_dots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div x-on:keyup.shift.enter="alert('Astro')" name="value"></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // Vue-style shorthand attributes like `:class` are supported in Astro.
+    // This works because we disabled namespaced element name parsing in Astro mode,
+    // so `:class` is correctly parsed as an attribute starting with `:`.
+    #[test]
+    fn compiler_compat_attributes_starting_with_colon() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div :class="hey" name="value"></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_template_literal_attribute() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div class=`${hello}`></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_spread_object() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source =
+            r#"<DocSearch {...{ lang, labels: { modal, placeholder } }} client:only="preact" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_spread_object_ii() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<MainLayout {...Astro.props}>\n</MainLayout>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_fragment_with_no_name() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<>+0123456789</>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_preserves_spaces_in_tag() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Button ></Button>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_preserves_spaces_after_attributes() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<Button a="b" ></Button>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/tsx/complex-generics.ts ---
+    #[test]
+    fn compiler_compat_complex_generics() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"---
+type Props<T extends Record<string, any>> = {
+  data: T;
+  render: (item: T) => string;
+};
+const { data, render } = Astro.props as Props<{ name: string }>;
+---
+<div>{render(data)}</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/tsx/nested-generics.ts ---
+    #[test]
+    fn compiler_compat_nested_generics() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"---
+interface Props {
+  items: Array<{ id: number; nested: Map<string, Set<number>> }>;
+}
+---
+<ul>{Astro.props.items.map(i => <li>{i.id}</li>)}</ul>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/tsx/script.ts ---
+    #[test]
+    fn compiler_compat_script_tag() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<script>console.log('hello');</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_script_with_type_module() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script type="module">import foo from './foo';</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- From test/tsx/raw.ts ---
+    #[test]
+    fn compiler_compat_set_html_directive() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div set:html={content}></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_set_text_directive() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<span set:text={text}></span>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Client Directives ---
+    #[test]
+    fn compiler_compat_client_load() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Component client:load />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_client_idle() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Component client:idle />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_client_visible() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Component client:visible />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_client_media() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<Component client:media="(max-width: 600px)" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_client_only() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<Component client:only="react" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Styles ---
+    #[test]
+    fn compiler_compat_style_tag_with_content() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<style>
+  .container { color: red; }
+  h1 { font-size: 2rem; }
+</style>
+<div class="container"><h1>Hello</h1></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_style_is_global() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<style is:global>\n  body { margin: 0; }\n</style>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_style_lang_scss() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<style lang="scss">
+  $color: red;
+  .foo { color: $color; }
+</style>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Tables ---
+    #[test]
+    fn compiler_compat_table_structure() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<table>
+  <thead>
+    <tr><th>Header</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Cell</td></tr>
+  </tbody>
+</table>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_table_with_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<table>
+  <tbody>
+    {items.map(item => <tr><td>{item.name}</td></tr>)}
+  </tbody>
+</table>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Slots ---
+    #[test]
+    fn compiler_compat_default_slot() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<Layout><slot /></Layout>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_named_slots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<Layout>
+  <Fragment slot="header">Header Content</Fragment>
+  <slot />
+  <div slot="footer">Footer Content</div>
+</Layout>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_slot_with_fallback() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<slot>Default content</slot>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Head and Metadata ---
+    #[test]
+    fn compiler_compat_head_with_meta() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>My Page</title>
+  </head>
+  <body></body>
+</html>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_view_transitions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"---
+import { ViewTransitions } from 'astro:transitions';
+---
+<head>
+  <ViewTransitions />
+</head>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Expressions ---
+    #[test]
+    fn compiler_compat_ternary_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{condition ? <True /> : <False />}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_logical_and() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{show && <Component />}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_logical_or() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{value || <Fallback />}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_nullish_coalescing() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{value ?? <Default />}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_map_with_arrow() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{items.map(item => <li key={item.id}>{item.name}</li>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_map_with_block_body() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"{items.map(item => {
+      const formatted = format(item);
+      return <li>{formatted}</li>;
+    })}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_filter_map_chain() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{items.filter(i => i.active).map(i => <span>{i.name}</span>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_await_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{await fetchData()}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_async_iife() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"{(async () => {
+      const data = await fetch('/api');
+      return <div>{data}</div>;
+    })()}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Special Elements ---
+    #[test]
+    fn compiler_compat_void_elements_without_closing() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<img src="test.png"><br><hr><input type="text">"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_svg_element() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="50" r="40" />
+</svg>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Go Parser Tests (from internal/parser_test.go) ---
+    #[test]
+    fn compiler_compat_go_end_tag_i() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div id="target"></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_go_end_tag_ii() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div class="TabBox">
+	<div id="target" class="tab-bar">
+		<div id="install-npm" class="active toggle"><h5>npm</h5></div>
+		<div id="install-yarn" class="toggle"><h5>yarn</h5></div>
+	</div>
+</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_go_class_list() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<span id="target" class:list={["link pixel variant", className]} {style}>
+	<a {href}>
+		<span><slot /></span>
+	</a>
+</span>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_go_complex_component() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<HeadingWrapper id="target">
+		<h2 class="heading"><UIString key="rightSidebar.community" /></h2>
+		{
+			hideOnLargerScreens && (
+				<svg
+					class="chevron"
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 1 16 16"
+					width="16"
+					height="16"
+					aria-hidden="true"
+				>
+					<path
+						fill-rule="evenodd"
+						d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"
+					/>
+				</svg>
+			)
+		}
+	</HeadingWrapper>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // --- Edge Cases ---
+    #[test]
+    fn compiler_compat_empty_file() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_only_frontmatter() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst x = 1;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_only_whitespace() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "   \n\n   ";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_deeply_nested() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<a><b><c><d><e><f><g><h><i><j>deep</j></i></h></g></f></e></d></c></b></a>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_many_siblings() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<a/><b/><c/><d/><e/><f/><g/><h/><i/><j/><k/><l/><m/><n/><o/><p/>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 16);
+    }
+
+    #[test]
+    fn compiler_compat_mixed_content() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "Text before <span>inline</span> text after {expression} more text";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_unicode_not_tag_start_simple() {
+        // Per HTML spec, only ASCII letters can start a tag name.
+        // `<日本語>` is treated as text, not a tag.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<日本語>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Should be parsed as text content, not as a JSX element
+        assert_eq!(ret.root.body.len(), 1);
+        assert!(
+            matches!(&ret.root.body[0], JSXChild::Text(_)),
+            "Expected JSXText, got {:?}",
+            ret.root.body[0]
+        );
+    }
+
+    #[test]
+    fn compiler_compat_unicode_not_tag_start_with_expression() {
+        // `<日本語 {expr}>` - the `<日本語 ` part is text, then `{expr}` is expression, then `>` is text
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<日本語 {expr}>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn compiler_compat_emoji_in_content() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div>Hello 👋 World 🌍</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // Test attribute with `>` in value - should work fine
+    #[test]
+    fn compiler_compat_attr_with_gt() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data=">" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // Test attribute with `<` in value
+    #[test]
+    fn compiler_compat_attr_with_lt() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data="<" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // Test special characters in attribute strings.
+    // In Astro/HTML, `\"` does NOT escape the quote - backslash is literal.
+    // So `"<>&\"` is a string containing `<>&\`, followed by the closing `"`.
+    // Then `'"` becomes a separate attribute name (HTML allows quotes in attr names).
+    #[test]
+    fn compiler_compat_special_chars_in_strings() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data-special="<>&\"'" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
     }
 }

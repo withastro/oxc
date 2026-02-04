@@ -228,7 +228,14 @@ impl<'a> ParserImpl<'a> {
         let identifier = self.parse_jsx_identifier();
 
         // <namespace:property />
-        if self.eat(Kind::Colon) {
+        // In Astro, namespaced element names are not supported - `:attr` is an attribute syntax.
+        // Only parse namespaced names in non-Astro JSX.
+        #[cfg(feature = "astro")]
+        let allow_namespaced = !self.source_type.is_astro();
+        #[cfg(not(feature = "astro"))]
+        let allow_namespaced = true;
+
+        if allow_namespaced && self.eat(Kind::Colon) {
             let property = self.parse_jsx_identifier();
             return self.ast.jsx_element_name_namespaced_name(
                 self.end_span(span),
@@ -466,6 +473,16 @@ impl<'a> ParserImpl<'a> {
                         continue;
                     }
                     JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
+                }
+                // In Astro, quotes can appear in attribute names (e.g., `<div '"attr />`).
+                // The regular lexer incorrectly tokenizes these as strings (or unterminated
+                // strings which become `Undetermined`). Pop any lexer error from the failed
+                // string tokenization, then re-lex as an Astro attribute name.
+                #[cfg(feature = "astro")]
+                Kind::Str | Kind::Undetermined if is_astro => {
+                    // Pop the "unterminated string" error that the lexer added
+                    self.lexer.errors.pop();
+                    JSXAttributeItem::Attribute(self.parse_astro_attribute())
                 }
                 _ => {
                     // In Astro, use permissive attribute name parsing
