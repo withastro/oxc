@@ -69,7 +69,7 @@ impl<'a> ParserImpl<'a> {
             (self.ast.vec(), None)
         } else {
             let children = if is_raw_text_element {
-                self.skip_raw_text_element_content(&opening_element.name, in_jsx_child)
+                self.skip_raw_text_element_content(&opening_element, in_jsx_child)
             } else {
                 self.parse_jsx_children()
             };
@@ -125,18 +125,22 @@ impl<'a> ParserImpl<'a> {
         }
     }
 
-    /// Skip the raw text content of a script or style element.
-    /// Returns an empty children vector since we don't parse the content as JSX.
+    /// Handle the content of a raw text element (script or style).
+    ///
+    /// For Astro files, bare `<script>` tags (no attributes) have their content
+    /// parsed as TypeScript and returned as an `AstroScript` child.
+    /// All other cases return an empty children vector (content is skipped).
     ///
     /// Note: This is called AFTER the opening element's `>` has been consumed,
     /// but BEFORE the lexer has advanced to parse JSX children.
     /// The `prev_token_end` points to right after the `>`.
+    #[expect(clippy::cast_possible_truncation)]
     fn skip_raw_text_element_content(
         &mut self,
-        name: &JSXElementName<'a>,
+        opening_element: &JSXOpeningElement<'a>,
         in_jsx_child: bool,
     ) -> Vec<'a, JSXChild<'a>> {
-        let tag_name = match name {
+        let tag_name = match &opening_element.name {
             JSXElementName::Identifier(ident) => ident.name.as_str(),
             _ => return self.ast.vec(),
         };
@@ -145,24 +149,60 @@ impl<'a> ParserImpl<'a> {
         let closing_tag = format!("</{tag_name}");
 
         // Start searching from after the `>` we just consumed
-        let start_pos = self.prev_token_end as usize;
-        if let Some(rest) = self.source_text.get(start_pos..)
-            && let Some(end_pos) = rest.find(&closing_tag)
-        {
-            // Move the lexer position to the closing tag
-            #[expect(clippy::cast_possible_truncation)]
-            let new_pos = (start_pos + end_pos) as u32;
-            self.lexer.set_position_for_astro(new_pos);
-            // Read the `<` token to prepare for parsing the closing element
-            // Use next_jsx_child if in_jsx_child to maintain consistent lexer state
-            if in_jsx_child {
-                self.token = self.lexer.next_jsx_child();
-            } else {
-                self.token = self.lexer.next_token();
-            }
+        let content_start = self.prev_token_end as usize;
+        let Some(rest) = self.source_text.get(content_start..) else {
+            return self.ast.vec();
+        };
+        let Some(end_offset) = rest.find(&closing_tag) else {
+            return self.ast.vec();
+        };
+
+        let content_end = content_start + end_offset;
+
+        // In Astro mode, bare <script> tags (no attributes) should be parsed as TypeScript
+        // and returned as AstroScript for semantic analysis.
+        let is_bare_astro_script = self.source_type.is_astro()
+            && tag_name == "script"
+            && opening_element.attributes.is_empty();
+
+        let children = if is_bare_astro_script {
+            // Create an AstroScript child with the script content
+            // Note: The span covers the entire <script>...</script>, but the Program
+            // inside represents just the content between the tags.
+            let script_content_span = oxc_span::Span::new(content_start as u32, content_end as u32);
+
+            let program = self.ast.program(
+                script_content_span,
+                self.source_type,
+                "",
+                self.ast.vec(),
+                None,
+                self.ast.vec(),
+                self.ast.vec(),
+            );
+
+            // The full span includes the opening tag through end of content
+            // (closing tag will be handled by parse_jsx_closing_element)
+            let script_span = oxc_span::Span::new(opening_element.span.start, content_end as u32);
+            let astro_script = self.ast.alloc_astro_script(script_span, program);
+
+            self.ast.vec1(JSXChild::AstroScript(astro_script))
+        } else {
+            self.ast.vec()
+        };
+
+        // Move the lexer position to the closing tag
+        let new_pos = content_end as u32;
+        self.lexer.set_position_for_astro(new_pos);
+        // Read the `<` token to prepare for parsing the closing element
+        // Use next_jsx_child if in_jsx_child to maintain consistent lexer state
+        if in_jsx_child {
+            self.token = self.lexer.next_jsx_child();
+        } else {
+            self.token = self.lexer.next_token();
         }
 
-        self.ast.vec()
+        children
     }
 
     /// `JSXOpeningElement` :
@@ -238,8 +278,8 @@ impl<'a> ParserImpl<'a> {
         // In Astro, `:` followed by whitespace is NOT a namespace separator.
         // `<div:foo>` is a namespaced name, but `<div :foo>` has `:foo` as an attribute.
         // We detect this by checking if there's whitespace between the identifier and `:`.
-        let colon_directly_follows = self.at(Kind::Colon)
-            && self.prev_token_end == self.cur_token().span().start;
+        let colon_directly_follows =
+            self.at(Kind::Colon) && self.prev_token_end == self.cur_token().span().start;
         if colon_directly_follows && self.eat(Kind::Colon) {
             let property = self.parse_jsx_identifier();
             return self.ast.jsx_element_name_namespaced_name(

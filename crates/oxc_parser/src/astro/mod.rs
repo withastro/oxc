@@ -385,7 +385,13 @@ mod test {
         let source_type = SourceType::astro();
         let source = "";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
-        assert!(ret.root.frontmatter.is_none());
+        // Frontmatter is always present (synthetic empty one for files without actual frontmatter)
+        assert!(ret.root.frontmatter.is_some());
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        // Synthetic frontmatter has 0-length span and empty body
+        assert_eq!(frontmatter.span.start, 0);
+        assert_eq!(frontmatter.span.end, 0);
+        assert!(frontmatter.program.body.is_empty());
         assert!(ret.root.body.is_empty());
         assert!(ret.errors.is_empty());
     }
@@ -424,8 +430,13 @@ const name = "World";
         assert!(!ret.panicked);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // No frontmatter
-        assert!(ret.root.frontmatter.is_none());
+        // Frontmatter is always present (synthetic empty one for files without actual frontmatter)
+        assert!(ret.root.frontmatter.is_some());
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        // Synthetic frontmatter has 0-length span and empty body
+        assert_eq!(frontmatter.span.start, 0);
+        assert_eq!(frontmatter.span.end, 0);
+        assert!(frontmatter.program.body.is_empty());
 
         // Body should have one element
         assert_eq!(ret.root.body.len(), 1);
@@ -940,7 +951,8 @@ const name = "World";
         // Check body has the Layout element (may have leading whitespace text)
         assert!(!ret.root.body.is_empty());
         // Find the first non-text element
-        let first_element = ret.root.body.iter().find(|child| matches!(child, JSXChild::Element(_)));
+        let first_element =
+            ret.root.body.iter().find(|child| matches!(child, JSXChild::Element(_)));
         assert!(first_element.is_some(), "Expected at least one JSXChild::Element in body");
     }
 
@@ -1610,5 +1622,425 @@ return;
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
         assert!(matches!(ret.root.body[1], JSXChild::Text(_)));
         assert!(matches!(ret.root.body[2], JSXChild::Element(_)));
+    }
+
+    #[test]
+    fn parse_astro_nested_script_parsed_as_typescript() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Bare <script> nested inside other elements should still be parsed as TypeScript
+        let source = r#"<!doctype html>
+<html>
+<head>
+  <script>
+    const unused = "test";
+    interface User { id: number; }
+  </script>
+</head>
+<body>
+  <script>
+    const x = 1;
+  </script>
+</body>
+</html>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to recursively find AstroScript nodes
+        fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
+            let mut count = 0;
+            for child in children.iter() {
+                match child {
+                    JSXChild::AstroScript(_) => count += 1,
+                    JSXChild::Element(el) => {
+                        // Check if this element has an AstroScript child
+                        count += count_astro_scripts(&el.children);
+                    }
+                    JSXChild::Fragment(f) => {
+                        count += count_astro_scripts(&f.children);
+                    }
+                    _ => {}
+                }
+            }
+            count
+        }
+
+        // Should find 2 AstroScript nodes (one in head, one in body)
+        let script_count = count_astro_scripts(&ret.root.body);
+        assert_eq!(script_count, 2, "Expected 2 AstroScript nodes, found {}", script_count);
+    }
+
+    #[test]
+    fn parse_astro_nested_script_with_attributes_not_parsed() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // <script> with attributes inside other elements should NOT be parsed
+        let source = r#"<html>
+<head>
+  <script is:inline>
+    const x = 1;
+  </script>
+</head>
+</html>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to recursively find AstroScript nodes
+        fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
+            let mut count = 0;
+            for child in children.iter() {
+                match child {
+                    JSXChild::AstroScript(_) => count += 1,
+                    JSXChild::Element(el) => {
+                        count += count_astro_scripts(&el.children);
+                    }
+                    JSXChild::Fragment(f) => {
+                        count += count_astro_scripts(&f.children);
+                    }
+                    _ => {}
+                }
+            }
+            count
+        }
+
+        // Should find 0 AstroScript nodes (script has attributes)
+        let script_count = count_astro_scripts(&ret.root.body);
+        assert_eq!(
+            script_count, 0,
+            "Expected 0 AstroScript nodes (script has attributes), found {}",
+            script_count
+        );
+    }
+
+    #[test]
+    fn parse_astro_script_inside_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Bare <script> inside an expression container should be parsed as TypeScript
+        let source = r#"{
+  <script>
+    const x = 1;
+    const y = 2;
+  </script>
+}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one expression container
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            // The expression should be a JSXElement (the script)
+            use oxc_ast::ast::JSXExpression;
+            if let JSXExpression::JSXElement(element) = &container.expression {
+                // The script element should have an AstroScript child with parsed content
+                assert_eq!(element.children.len(), 1, "Script element should have 1 child");
+                if let JSXChild::AstroScript(script) = &element.children[0] {
+                    // Should have 2 statements (const x, const y)
+                    assert_eq!(
+                        script.program.body.len(),
+                        2,
+                        "Expected 2 statements in script, got {}",
+                        script.program.body.len()
+                    );
+                    assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
+                    assert!(matches!(script.program.body[1], Statement::VariableDeclaration(_)));
+                } else {
+                    panic!("Expected AstroScript child, got {:?}", element.children[0]);
+                }
+            } else {
+                panic!("Expected JSXElement expression, got {:?}", container.expression);
+            }
+        } else {
+            panic!("Expected ExpressionContainer, got {:?}", ret.root.body[0]);
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_inside_logical_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Bare <script> inside a logical expression (common Astro pattern)
+        let source = r#"{condition && <script>const x = 1;</script>}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to find AstroScript nodes in expression containers
+        fn find_astro_scripts_in_expression<'a>(
+            expr: &'a oxc_ast::ast::JSXExpression<'a>,
+        ) -> Vec<&'a oxc_ast::ast::AstroScript<'a>> {
+            use oxc_ast::ast::{Expression, JSXExpression};
+            let mut scripts = Vec::new();
+
+            match expr {
+                JSXExpression::JSXElement(el) => {
+                    for child in &el.children {
+                        if let JSXChild::AstroScript(script) = child {
+                            scripts.push(script.as_ref());
+                        }
+                    }
+                }
+                JSXExpression::LogicalExpression(logical) => {
+                    if let Expression::JSXElement(el) = &logical.right {
+                        for child in &el.children {
+                            if let JSXChild::AstroScript(script) = child {
+                                scripts.push(script.as_ref());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            scripts
+        }
+
+        // Body should have one expression container
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            let scripts = find_astro_scripts_in_expression(&container.expression);
+            assert_eq!(scripts.len(), 1, "Expected 1 AstroScript, found {}", scripts.len());
+            // The script should have 1 statement
+            assert_eq!(scripts[0].program.body.len(), 1);
+            assert!(matches!(scripts[0].program.body[0], Statement::VariableDeclaration(_)));
+        } else {
+            panic!("Expected ExpressionContainer");
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_inside_ternary_expression() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Scripts in both branches of a ternary
+        let source =
+            r#"{condition ? <script>const a = 1;</script> : <script>const b = 2;</script>}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to count AstroScript nodes in an expression
+        fn count_scripts_in_expression(expr: &oxc_ast::ast::Expression) -> usize {
+            use oxc_ast::ast::Expression;
+            match expr {
+                Expression::JSXElement(el) => {
+                    el.children.iter().filter(|c| matches!(c, JSXChild::AstroScript(_))).count()
+                }
+                Expression::ConditionalExpression(cond) => {
+                    count_scripts_in_expression(&cond.consequent)
+                        + count_scripts_in_expression(&cond.alternate)
+                }
+                _ => 0,
+            }
+        }
+
+        // Body should have one expression container
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            use oxc_ast::ast::JSXExpression;
+            if let JSXExpression::ConditionalExpression(cond) = &container.expression {
+                let script_count = count_scripts_in_expression(&cond.consequent)
+                    + count_scripts_in_expression(&cond.alternate);
+                assert_eq!(
+                    script_count, 2,
+                    "Expected 2 AstroScripts in ternary, found {}",
+                    script_count
+                );
+            } else {
+                panic!("Expected ConditionalExpression");
+            }
+        } else {
+            panic!("Expected ExpressionContainer");
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_inside_map_callback() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Script inside a .map() callback - common Astro pattern
+        let source = r#"{items.map(item => <script>const x = item;</script>)}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to find AstroScript nodes recursively in an expression
+        fn find_scripts_in_expr<'a>(
+            expr: &'a oxc_ast::ast::Expression<'a>,
+        ) -> Vec<&'a oxc_ast::ast::AstroScript<'a>> {
+            use oxc_ast::ast::Expression;
+            let mut scripts = Vec::new();
+            match expr {
+                Expression::JSXElement(el) => {
+                    for child in &el.children {
+                        if let JSXChild::AstroScript(script) = child {
+                            scripts.push(script.as_ref());
+                        }
+                    }
+                }
+                Expression::CallExpression(call) => {
+                    for arg in &call.arguments {
+                        if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
+                            // Check all statements in the arrow function body
+                            for stmt in &arrow.body.statements {
+                                if let Statement::ExpressionStatement(expr_stmt) = stmt {
+                                    scripts.extend(find_scripts_in_expr(&expr_stmt.expression));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            scripts
+        }
+
+        // Body should have one expression container
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            use oxc_ast::ast::JSXExpression;
+            if let JSXExpression::CallExpression(call) = &container.expression {
+                // Traverse into the call to find scripts
+                let mut scripts = Vec::new();
+                for arg in &call.arguments {
+                    if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
+                        // Arrow function with expression body
+                        if arrow.expression {
+                            if let Some(stmt) = arrow.body.statements.first() {
+                                if let Statement::ExpressionStatement(expr_stmt) = stmt {
+                                    scripts.extend(find_scripts_in_expr(&expr_stmt.expression));
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    scripts.len(),
+                    1,
+                    "Expected 1 AstroScript in map callback, found {}",
+                    scripts.len()
+                );
+                // Verify the script was actually parsed (has statements)
+                assert_eq!(scripts[0].program.body.len(), 1, "Script should have 1 statement");
+            } else {
+                panic!("Expected CallExpression, got {:?}", container.expression);
+            }
+        } else {
+            panic!("Expected ExpressionContainer");
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_inside_filter_map_chain() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Script inside chained array methods - the outer .map() call returns JSX with a script
+        let source =
+            r#"{items.filter(x => x > 0).map(item => <div><script>const y = 1;</script></div>)}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Helper to find all AstroScript nodes recursively in JSX children
+        fn find_scripts_in_children<'a>(
+            children: &'a [JSXChild<'a>],
+        ) -> Vec<&'a oxc_ast::ast::AstroScript<'a>> {
+            let mut scripts = Vec::new();
+            for child in children {
+                match child {
+                    JSXChild::AstroScript(script) => {
+                        scripts.push(script.as_ref());
+                    }
+                    JSXChild::Element(el) => {
+                        scripts.extend(find_scripts_in_children(&el.children));
+                    }
+                    JSXChild::Fragment(frag) => {
+                        scripts.extend(find_scripts_in_children(&frag.children));
+                    }
+                    _ => {}
+                }
+            }
+            scripts
+        }
+
+        // Verify we have the expression container
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            use oxc_ast::ast::JSXExpression;
+            if let JSXExpression::CallExpression(call) = &container.expression {
+                // The outer .map() call should have the script in its callback
+                let mut found_parsed_script = false;
+                for arg in &call.arguments {
+                    if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
+                        for stmt in &arrow.body.statements {
+                            if let Statement::ExpressionStatement(expr_stmt) = stmt {
+                                // The expression should be a JSXElement containing a nested script
+                                if let oxc_ast::ast::Expression::JSXElement(el) =
+                                    &expr_stmt.expression
+                                {
+                                    let scripts = find_scripts_in_children(&el.children);
+                                    for script in &scripts {
+                                        // Verify the script was parsed (has statements)
+                                        if !script.program.body.is_empty() {
+                                            found_parsed_script = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    found_parsed_script,
+                    "Expected to find a parsed script in filter-map chain"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_with_block_body_arrow() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Script inside arrow function with block body (not concise)
+        let source = r#"{items.map(item => { return <script>const z = 1;</script>; })}"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Verify we have the expression container with a script
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            use oxc_ast::ast::JSXExpression;
+            if let JSXExpression::CallExpression(call) = &container.expression {
+                let mut found_script = false;
+                for arg in &call.arguments {
+                    if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
+                        for stmt in &arrow.body.statements {
+                            if let Statement::ReturnStatement(ret_stmt) = stmt {
+                                if let Some(arg) = &ret_stmt.argument {
+                                    if let oxc_ast::ast::Expression::JSXElement(el) = arg {
+                                        for child in &el.children {
+                                            if let JSXChild::AstroScript(script) = child {
+                                                // Verify the script was parsed
+                                                assert_eq!(
+                                                    script.program.body.len(),
+                                                    1,
+                                                    "Script should have 1 statement"
+                                                );
+                                                found_script = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(found_script, "Expected to find a parsed script in block body arrow");
+            }
+        }
     }
 }

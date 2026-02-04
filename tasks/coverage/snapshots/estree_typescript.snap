@@ -1,8 +1,8 @@
 commit: 95e3aaa9
 
 estree_typescript Summary:
-AST Parsed     : 9776/9776 (100.00%)
-Positive Passed: 9768/9776 (99.92%)
+AST Parsed     : 9772/9776 (99.96%)
+Positive Passed: 9764/9776 (99.88%)
 Mismatch: tasks/coverage/typescript/tests/cases/compiler/moduleDetectionIsolatedModulesCjsFileScope.ts
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/externalModules/moduleResolutionWithoutExtension2.ts
@@ -15,6 +15,14 @@ Mismatch: tasks/coverage/typescript/tests/cases/conformance/importDefer/importDe
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/jsx/jsxReactTestSuite.tsx
 
+Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName1.tsx
+Unexpected token
+Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName2.tsx
+Unexpected token
+Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedTagName1.tsx
+Unexpected token
+Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedTagName2.tsx
+Unexpected token
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxReactEmitEntities.tsx
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxReactEmitNesting.tsx

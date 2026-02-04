@@ -959,6 +959,17 @@ impl Runtime {
         allocator: &'a Allocator,
         mut out_sections: Option<&mut SectionContents<'a>>,
     ) -> SmallVec<[Result<ResolvedModuleRecord, Vec<OxcDiagnostic>>; 1]> {
+        // Special handling for Astro files - use full AST parsing
+        if ext == "astro" {
+            return self.process_astro_source(
+                path,
+                source_text,
+                allocator,
+                check_syntax_errors,
+                out_sections,
+            );
+        }
+
         let section_sources = PartialLoader::parse(ext, source_text)
             .unwrap_or_else(|| vec![JavaScriptSource::partial(source_text, source_type, 0)]);
 
@@ -1060,5 +1071,93 @@ impl Runtime {
                 .collect();
         }
         Ok((ResolvedModuleRecord { module_record, resolved_module_requests }, semantic))
+    }
+
+    /// Process an Astro file using the full Astro parser.
+    /// This enables linting of both frontmatter code and JSX template.
+    fn process_astro_source<'a>(
+        &self,
+        path: &Path,
+        source_text: &'a str,
+        allocator: &'a Allocator,
+        check_syntax_errors: bool,
+        mut out_sections: Option<&mut SectionContents<'a>>,
+    ) -> SmallVec<[Result<ResolvedModuleRecord, Vec<OxcDiagnostic>>; 1]> {
+        let source_type = SourceType::astro();
+
+        // Parse as Astro
+        let ret = Parser::new(allocator, source_text, source_type)
+            .with_options(ParseOptions {
+                parse_regular_expression: true,
+                allow_return_outside_function: true,
+                ..ParseOptions::default()
+            })
+            .parse_astro();
+
+        if !ret.errors.is_empty() {
+            let section_source = JavaScriptSource::new(source_text, source_type);
+            if let Some(sections) = &mut out_sections {
+                sections.push(SectionContent { source: section_source, semantic: None });
+            }
+            return smallvec::smallvec![Err(ret.errors)];
+        }
+
+        // Allocate the root first, then get comments reference from it
+        let root = allocator.alloc(ret.root);
+
+        // Get comments from frontmatter if available, otherwise use empty
+        let comments: &oxc_allocator::Vec<'_, oxc_ast::ast::Comment> =
+            if let Some(ref frontmatter) = root.frontmatter {
+                &frontmatter.program.comments
+            } else {
+                // Create an empty comments vec
+                allocator.alloc(oxc_allocator::Vec::new_in(allocator))
+            };
+
+        // Build semantic using our new Astro-aware method
+        let semantic_ret = SemanticBuilder::new()
+            .with_cfg(true)
+            .with_check_syntax_error(check_syntax_errors)
+            .build_astro(root, source_text, comments);
+
+        if !semantic_ret.errors.is_empty() {
+            let section_source = JavaScriptSource::new(source_text, source_type);
+            if let Some(sections) = &mut out_sections {
+                sections.push(SectionContent { source: section_source, semantic: None });
+            }
+            return smallvec::smallvec![Err(semantic_ret.errors)];
+        }
+
+        let semantic = semantic_ret.semantic;
+
+        // Create module record (may be empty for Astro files without imports)
+        let mut module_record = ModuleRecord::default();
+        module_record.resolved_absolute_path = path.to_path_buf();
+        let module_record = Arc::new(module_record);
+
+        let mut resolved_module_requests: Vec<ResolvedModuleRequest> = vec![];
+
+        // If import plugin is enabled, resolve imports from frontmatter
+        if let Some(resolver) = &self.resolver {
+            let dir = path.parent().unwrap();
+            resolved_module_requests = module_record
+                .requested_modules
+                .keys()
+                .filter_map(|specifier| {
+                    let resolution = resolver.resolve(dir, specifier).ok()?;
+                    Some(ResolvedModuleRequest {
+                        specifier: specifier.clone(),
+                        resolved_requested_path: Arc::<OsStr>::from(resolution.path().as_os_str()),
+                    })
+                })
+                .collect();
+        }
+
+        let section_source = JavaScriptSource::new(source_text, source_type);
+        if let Some(sections) = &mut out_sections {
+            sections.push(SectionContent { source: section_source, semantic: Some(semantic) });
+        }
+
+        smallvec::smallvec![Ok(ResolvedModuleRecord { module_record, resolved_module_requests })]
     }
 }

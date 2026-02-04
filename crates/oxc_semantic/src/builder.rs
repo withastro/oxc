@@ -305,6 +305,76 @@ impl<'a> SemanticBuilder<'a> {
         SemanticBuilderReturn { semantic, errors: self.errors.into_inner() }
     }
 
+    /// Build semantic information for an Astro file.
+    ///
+    /// This processes the frontmatter Program (if present) and JSX body, creating a unified scope
+    /// where frontmatter variables are accessible in JSX expressions.
+    ///
+    /// # Panics
+    pub fn build_astro(
+        mut self,
+        root: &'a AstroRoot<'a>,
+        source_text: &'a str,
+        comments: &'a oxc_allocator::Vec<'a, Comment>,
+    ) -> SemanticBuilderReturn<'a> {
+        self.source_text = source_text;
+        // Astro files are TypeScript + JSX
+        self.source_type = SourceType::ts().with_jsx(true);
+
+        #[cfg(feature = "linter")]
+        {
+            self.jsdoc = JSDocBuilder::new(self.source_text, comments);
+        }
+
+        // Use stats from frontmatter Program for capacity estimation
+        // Parser always creates a frontmatter (synthetic if needed) so unwrap is safe
+        let frontmatter =
+            root.frontmatter.as_ref().expect("Astro parser should always create frontmatter");
+        let stats = if let Some(stats) = self.stats {
+            stats
+        } else {
+            Stats::count(&frontmatter.program).increase_by(self.excess_capacity + 0.5)
+        };
+        self.nodes.reserve(stats.nodes as usize);
+        self.scoping.reserve(
+            stats.symbols as usize,
+            stats.references as usize,
+            stats.scopes as usize,
+        );
+
+        // Visit the Astro AST - frontmatter's Program is the root, JSX body is visited in same scope
+        self.astro_visit_frontmatter_with_body(frontmatter, &root.body);
+
+        debug_assert_eq!(self.unresolved_references.scope_depth(), 1);
+        self.scoping.set_root_unresolved_references(
+            self.unresolved_references.into_root().into_iter().map(|(k, v)| (k.as_str(), v)),
+        );
+
+        #[cfg(feature = "linter")]
+        let jsdoc = self.jsdoc.build();
+
+        #[cfg(debug_assertions)]
+        self.unused_labels.assert_empty();
+
+        let semantic = Semantic {
+            source_text: self.source_text,
+            source_type: self.source_type,
+            comments,
+            irregular_whitespaces: [].into(),
+            nodes: self.nodes,
+            scoping: self.scoping,
+            classes: self.class_table_builder.build(),
+            #[cfg(feature = "linter")]
+            jsdoc,
+            unused_labels: self.unused_labels.labels,
+            #[cfg(feature = "cfg")]
+            cfg: self.cfg.map(ControlFlowGraphBuilder::build),
+            #[cfg(not(feature = "cfg"))]
+            cfg: (),
+        };
+        SemanticBuilderReturn { semantic, errors: self.errors.into_inner() }
+    }
+
     /// Push a Syntax Error
     pub(crate) fn error(&self, error: OxcDiagnostic) {
         self.errors.borrow_mut().push(error);
@@ -591,6 +661,135 @@ impl<'a> SemanticBuilder<'a> {
     ) {
         self.scoping.add_symbol_redeclaration(symbol_id, flags, self.current_node_id, span);
     }
+
+    /// Visit Astro with frontmatter - use frontmatter's Program as root.
+    fn astro_visit_frontmatter_with_body(
+        &mut self,
+        frontmatter: &AstroFrontmatter<'a>,
+        body: &oxc_allocator::Vec<'a, JSXChild<'a>>,
+    ) {
+        let program = &frontmatter.program;
+        self.astro_setup_root_program(program);
+
+        // Visit frontmatter program contents
+        if let Some(hashbang) = &program.hashbang {
+            self.visit_hashbang(hashbang);
+        }
+        for directive in &program.directives {
+            self.visit_directive(directive);
+        }
+        self.visit_statements(&program.body);
+
+        // Visit the JSX body within the same scope
+        self.visit_jsx_children(body);
+
+        self.astro_finish_root_program();
+    }
+
+    /// Set up the root Program node and scope for Astro semantic analysis.
+    fn astro_setup_root_program(&mut self, program: &Program<'a>) {
+        let prog_kind = AstKind::Program(self.alloc(program));
+
+        #[cfg(feature = "cfg")]
+        control_flow!(self, |cfg| {
+            cfg.attach_error_harness(ErrorEdgeKind::Implicit);
+            let _ = cfg.new_basic_block_normal();
+        });
+
+        self.current_node_id = self.nodes.add_program_node(
+            prog_kind,
+            self.current_scope_id,
+            #[cfg(feature = "cfg")]
+            control_flow!(self, |cfg| cfg.current_node_ix),
+            self.current_node_flags,
+        );
+
+        let mut flags = ScopeFlags::Top;
+        if self.source_type.is_strict() || program.has_use_strict_directive() {
+            flags |= ScopeFlags::StrictMode;
+        }
+        self.current_scope_id = self.scoping.add_scope(None, self.current_node_id, flags);
+        program.scope_id.set(Some(self.current_scope_id));
+    }
+
+    /// Finish the root Program - resolve references and pop the node.
+    fn astro_finish_root_program(&mut self) {
+        self.resolve_references_for_current_scope();
+        self.pop_ast_node();
+    }
+
+    /// Resolve references for an Astro script scope.
+    ///
+    /// Unlike `resolve_references_for_current_scope`, this sends unresolved references
+    /// directly to the root scope (depth 1) instead of the immediate parent scope.
+    /// This provides proper isolation for Astro scripts which run in the browser
+    /// and cannot access frontmatter variables.
+    fn resolve_references_for_astro_script(&mut self) {
+        use oxc_syntax::reference::ReferenceFlags;
+
+        let current_refs = self.unresolved_references.current_mut();
+        let mut unresolved_for_root: Vec<(Atom<'a>, crate::unresolved_stack::ReferenceIds)> =
+            Vec::new();
+
+        for (name, mut references) in current_refs.drain() {
+            // Try to resolve references against bindings in the current (script) scope
+            let bindings = self.scoping.get_bindings(self.current_scope_id);
+            if let Some(symbol_id) = bindings.get(name.as_str()).copied() {
+                let symbol_flags = self.scoping.symbol_flags(symbol_id);
+                references.retain(|reference_id| {
+                    let reference_id = *reference_id;
+                    let reference = &mut self.scoping.references[reference_id];
+
+                    let flags = reference.flags_mut();
+
+                    let resolved = if flags.is_namespace()
+                        && !flags.is_value()
+                        && !flags.is_value_as_type()
+                        && !symbol_flags.can_be_referenced_as_namespace()
+                    {
+                        false
+                    } else {
+                        (flags.is_value() && symbol_flags.can_be_referenced_by_value())
+                            || (flags.is_type() && symbol_flags.can_be_referenced_by_type())
+                            || (flags.is_value_as_type()
+                                && symbol_flags.can_be_referenced_by_value_as_type())
+                    };
+
+                    if !resolved {
+                        return true;
+                    }
+
+                    if symbol_flags.is_value() && flags.is_value() {
+                        *flags -= ReferenceFlags::Type;
+                    } else {
+                        *flags = ReferenceFlags::Type;
+                    }
+                    reference.set_symbol_id(symbol_id);
+                    self.scoping.add_resolved_reference(symbol_id, reference_id);
+
+                    false
+                });
+
+                if references.is_empty() {
+                    continue;
+                }
+            }
+
+            // Unresolved references go to root, not parent
+            unresolved_for_root.push((name, references));
+        }
+
+        // Add unresolved references directly to the root scope (depth 1)
+        // This bypasses the frontmatter scope
+        let root_refs = self.unresolved_references.root_mut();
+        for (name, references) in unresolved_for_root {
+            if let Some(root_reference_ids) = root_refs.get_mut(&name) {
+                root_reference_ids.extend(references);
+            } else {
+                root_refs.insert(name, references);
+            }
+        }
+    }
 }
 
 impl<'a> Visit<'a> for SemanticBuilder<'a> {
@@ -705,6 +904,46 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 
         // Check `current_function_node_id` has been reset to as it was at start
         debug_assert!(self.current_function_node_id == NodeId::ROOT);
+    }
+
+    /// Custom visitor for AstroScript that creates an isolated scope.
+    ///
+    /// Astro `<script>` tags run in the browser and cannot access frontmatter variables.
+    /// This method creates a scope that doesn't inherit from the frontmatter scope -
+    /// unresolved references go directly to the root scope (globals) rather than
+    /// resolving against frontmatter bindings.
+    fn visit_astro_script(&mut self, script: &AstroScript<'a>) {
+        let kind = AstKind::AstroScript(self.alloc(script));
+        self.create_ast_node(kind);
+
+        // Create a new scope for this script
+        // Use Top flag to indicate this is a top-level scope for the script
+        self.enter_scope(
+            ScopeFlags::Top | ScopeFlags::Function | ScopeFlags::StrictMode,
+            &script.program.scope_id,
+        );
+
+        // Visit the script's program contents
+        if let Some(hashbang) = &script.program.hashbang {
+            self.visit_hashbang(hashbang);
+        }
+        for directive in &script.program.directives {
+            self.visit_directive(directive);
+        }
+        self.visit_statements(&script.program.body);
+
+        // Resolve references within this script's scope, but send unresolved ones
+        // directly to the root scope (not to the frontmatter parent scope)
+        self.resolve_references_for_astro_script();
+
+        // Restore parent scope manually (don't use leave_scope which would resolve again)
+        let parent_id = self.scoping.scope_parent_id(self.current_scope_id);
+        if let Some(parent_id) = parent_id {
+            self.current_scope_id = parent_id;
+        }
+        self.unresolved_references.decrement_scope_depth();
+
+        self.pop_ast_node();
     }
 
     fn visit_break_statement(&mut self, stmt: &BreakStatement<'a>) {

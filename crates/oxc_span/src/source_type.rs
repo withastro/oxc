@@ -141,9 +141,9 @@ pub enum FileExtension {
     /// `.cts` file extension
     Cts = 6,
     /// `.tsx` file extension
-    Tsx = 7
+    Tsx = 7,
     /// `.astro` file extension
-    Astro = 8
+    Astro = 8,
 }
 
 impl FileExtension {
@@ -410,6 +410,7 @@ impl SourceType {
             language: Language::TypeScript,
             module_kind: ModuleKind::Module,
             variant: LanguageVariant::Astro,
+            extension: Some(FileExtension::Astro),
         }
     }
 
