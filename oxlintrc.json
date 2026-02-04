@@ -74,6 +74,7 @@
     "tasks/coverage/**",
     "crates/oxc_semantic/tests/**",
     "napi/minify/**", // TODO
+    "apps/oxlint/src-js/package/config.generated.ts",
     "!apps/oxlint/test/fixtures/**",
     "apps/oxlint/test/fixtures/*/files/**",
     "apps/oxlint/conformance/submodules/**",
@@ -86,6 +87,7 @@
     "napi/*/src-js/*.wasi.cjs",
     "napi/*/src-js/*.wasi-browser.js",
     "napi/*/src-js/wasi-worker.mjs",
-    "napi/*/src-js/wasi-worker-browser.mjs"
+    "napi/*/src-js/wasi-worker-browser.mjs",
+    "npm/oxlint-plugins/**"
   ]
 }

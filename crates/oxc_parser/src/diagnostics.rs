@@ -647,6 +647,14 @@ pub fn ts_empty_type_argument_list(span: Span) -> OxcDiagnostic {
 }
 
 #[cold]
+pub fn ts_instantiation_expression_cannot_be_followed_by_property_access(
+    span: Span,
+) -> OxcDiagnostic {
+    ts_error("1477", "An instantiation expression cannot be followed by a property access.")
+        .with_label(span)
+}
+
+#[cold]
 pub fn ts_string_literal_expected(span: Span) -> OxcDiagnostic {
     ts_error("1141", "String literal expected.").with_label(span)
 }
@@ -1259,4 +1267,20 @@ pub fn named_import_not_allowed_in_defer(span: Span) -> OxcDiagnostic {
 pub fn only_default_import_allowed_in_source_phase(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Only a single default import is allowed in a source phase import.")
         .with_label(span)
+}
+
+#[cold]
+pub fn ts_import_type_options_expected_with(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Expected 'with' in import type options").with_label(span)
+}
+
+#[cold]
+pub fn ts_import_type_options_invalid_key(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Import attributes keys must be identifier or string literal.")
+        .with_label(span)
+}
+
+#[cold]
+pub fn ts_import_type_options_no_spread(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Spread elements are not allowed in import type options.").with_label(span)
 }

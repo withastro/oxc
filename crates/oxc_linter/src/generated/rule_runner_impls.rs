@@ -1385,6 +1385,12 @@ impl RuleRunner
     const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::Run;
 }
 
+impl RuleRunner for crate::rules::typescript::consistent_type_assertions::ConsistentTypeAssertions {
+    const NODE_TYPES: Option<&AstTypesBitset> =
+        Some(&AstTypesBitset::from_types(&[AstType::TSAsExpression, AstType::TSTypeAssertion]));
+    const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::Run;
+}
+
 impl RuleRunner
     for crate::rules::typescript::consistent_type_definitions::ConsistentTypeDefinitions
 {
@@ -3301,6 +3307,12 @@ impl RuleRunner for crate::rules::unicorn::prefer_type_error::PreferTypeError {
     const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::Run;
 }
 
+impl RuleRunner for crate::rules::unicorn::relative_url_style::RelativeUrlStyle {
+    const NODE_TYPES: Option<&AstTypesBitset> =
+        Some(&AstTypesBitset::from_types(&[AstType::NewExpression]));
+    const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::Run;
+}
+
 impl RuleRunner for crate::rules::unicorn::require_array_join_separator::RequireArrayJoinSeparator {
     const NODE_TYPES: Option<&AstTypesBitset> =
         Some(&AstTypesBitset::from_types(&[AstType::CallExpression]));
@@ -4079,6 +4091,11 @@ impl RuleRunner for crate::rules::vitest::prefer_called_times::PreferCalledTimes
 impl RuleRunner
     for crate::rules::vitest::prefer_describe_function_title::PreferDescribeFunctionTitle
 {
+    const NODE_TYPES: Option<&AstTypesBitset> = None;
+    const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::RunOnJestNode;
+}
+
+impl RuleRunner for crate::rules::vitest::prefer_expect_type_of::PreferExpectTypeOf {
     const NODE_TYPES: Option<&AstTypesBitset> = None;
     const RUN_FUNCTIONS: RuleRunFunctionsImplemented = RuleRunFunctionsImplemented::RunOnJestNode;
 }

@@ -218,6 +218,7 @@ pub(crate) mod typescript {
     pub mod ban_types;
     pub mod consistent_generic_constructors;
     pub mod consistent_indexed_object_style;
+    pub mod consistent_type_assertions;
     pub mod consistent_type_definitions;
     pub mod consistent_type_imports;
     pub mod explicit_function_return_type;
@@ -533,6 +534,7 @@ pub(crate) mod unicorn {
     pub mod prefer_structured_clone;
     pub mod prefer_top_level_await;
     pub mod prefer_type_error;
+    pub mod relative_url_style;
     pub mod require_array_join_separator;
     pub mod require_module_attributes;
     pub mod require_module_specifiers;
@@ -681,6 +683,7 @@ pub(crate) mod vitest {
     pub mod prefer_called_once;
     pub mod prefer_called_times;
     pub mod prefer_describe_function_title;
+    pub mod prefer_expect_type_of;
     pub mod prefer_to_be_falsy;
     pub mod prefer_to_be_object;
     pub mod prefer_to_be_truthy;

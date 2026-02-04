@@ -1,9 +1,9 @@
-commit: 7f6a8467
+commit: 95e3aaa9
 
 parser_typescript Summary:
 AST Parsed     : 9842/9843 (99.99%)
-Positive Passed: 9837/9843 (99.94%)
-Negative Passed: 1510/2555 (59.10%)
+Positive Passed: 9838/9843 (99.95%)
+Negative Passed: 1514/2557 (59.21%)
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/FunctionDeclaration3.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/FunctionDeclaration4.ts
@@ -193,8 +193,6 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/contextualTy
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/contextualTypingWithFixedTypeParameters1.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/continueNotInIterationStatement4.ts
-
-Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/corrupted.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/crashDeclareGlobalTypeofExport.ts
 
@@ -717,8 +715,6 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/omitTypeTest
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/omittedExpressionForOfLoop.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/operationsAvailableOnPromisedType.ts
-
-Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/optionalChainWithInstantiationExpression1.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/optionalParamReferencingOtherParams2.ts
 
@@ -1468,6 +1464,8 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/externalM
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/emit.ts
 
+Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.11.ts
+
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/externalModules/topLevelAwaitNonModule.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/externalModules/topLevelModuleDeclarationAndFile.ts
@@ -1774,10 +1772,6 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ec
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/FunctionDeclarations/parserFunctionDeclaration7.ts
 
-Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/Generics/parserMemberAccessExpression1.ts
-
-Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/Generics/parserMemberAccessOffOfGenericType1.ts
-
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/IndexMemberDeclarations/parserIndexMemberDeclaration5.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessor1.ts
@@ -1968,6 +1962,8 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/statement
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/statements/for-ofStatements/ES5For-of35.ts
 
+Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/statements/labeledStatements/labeledStatementDeclarationListInLoopNoCrash2.ts
+
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/types/any/narrowFromAnyWithTypePredicate.ts
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/types/conditional/conditionalTypes1.ts
@@ -2094,7 +2090,7 @@ Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/types/uni
 
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/conformance/types/witness/witness.ts
 
-Expect to Parse: tasks/coverage/typescript/tests/cases/compiler/sourceMapValidationDecorators.ts
+Panicked: tasks/coverage/typescript/tests/cases/compiler/sourceMapValidationDecorators.ts
 
   × Unexpected token
     ╭─[typescript/tests/cases/compiler/sourceMapValidationDecorators.ts:18:7]
@@ -2117,15 +2113,6 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/async/es6/asy
      ·             ╰── It can not be redeclared here
  132 │     }
      ╰────
-
-Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/dynamicImport/importCallExpressionInScriptContext1.ts
-
-  × Cannot assign to 'arguments' in strict mode
-   ╭─[typescript/tests/cases/conformance/dynamicImport/importCallExpressionInScriptContext1.ts:2:10]
- 1 │ var p1 = import("./0");
- 2 │ function arguments() { } // this is allow as the file doesn't have implicit "use strict"
-   ·          ─────────
-   ╰────
 
 Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/ComputedPropertyNames/parserES5ComputedPropertyName11.ts
 
@@ -4682,6 +4669,12 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  293 │     class interface { }
      ╰────
 
+  × Invalid Character `�`
+   ╭─[typescript/tests/cases/compiler/corrupted.ts:1:1]
+ 1 │ ���
+   · ─
+   ╰────
+
   × TS(2391): Function implementation is missing or not immediately following the declaration.
    ╭─[typescript/tests/cases/compiler/crashOnMethodSignatures.ts:2:5]
  1 │ class A {
@@ -4745,6 +4738,30 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
 
   × TS(1187): A parameter property may not be declared using a binding pattern.
     ╭─[typescript/tests/cases/compiler/declarationEmitDestructuringParameterProperties.ts:14:17]
+ 13 │ class C3 {
+ 14 │     constructor(public { x, y, z }: ObjType1) {
+    ·                 ────────────────────────────
+ 15 │     }
+    ╰────
+
+  × TS(1187): A parameter property may not be declared using a binding pattern.
+   ╭─[typescript/tests/cases/compiler/declarationEmitDestructuringParameterProperties2.ts:2:17]
+ 1 │ class C1 {
+ 2 │     constructor(public [x, y, z]: string[]) {
+   ·                 ──────────────────────────
+ 3 │     }
+   ╰────
+
+  × TS(1187): A parameter property may not be declared using a binding pattern.
+   ╭─[typescript/tests/cases/compiler/declarationEmitDestructuringParameterProperties2.ts:8:17]
+ 7 │ class C2 {
+ 8 │     constructor(public [x, y, z]: TupleType1) {
+   ·                 ────────────────────────────
+ 9 │     }
+   ╰────
+
+  × TS(1187): A parameter property may not be declared using a binding pattern.
+    ╭─[typescript/tests/cases/compiler/declarationEmitDestructuringParameterProperties2.ts:14:17]
  13 │ class C3 {
  14 │     constructor(public { x, y, z }: ObjType1) {
     ·                 ────────────────────────────
@@ -6486,6 +6503,13 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  5 │ }
    ╰────
   help: Allowed modifiers are: declare, async
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/compiler/genericCallWithoutArgs.ts:4:1]
+ 3 │ 
+ 4 │ f<number,string>.
+   · ─────────────────
+   ╰────
 
   × Unexpected token
    ╭─[typescript/tests/cases/compiler/genericCallWithoutArgs.ts:4:18]
@@ -8967,6 +8991,14 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ·             ─
    ╰────
 
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+    ╭─[typescript/tests/cases/compiler/optionalChainWithInstantiationExpression1.ts:12:1]
+ 11 │ 
+ 12 │ a?.b<c>.d;
+    · ────────
+ 13 │ 
+    ╰────
+
   × Identifier `C1M5` has already been declared
     ╭─[typescript/tests/cases/compiler/optionalParamArgsTest.ts:31:12]
  30 │ 
@@ -9157,12 +9189,11 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    · ─
    ╰────
 
-  × Expected `:` but found `,`
-   ╭─[typescript/tests/cases/compiler/parseAssertEntriesError.ts:2:36]
+  × Unexpected token
+   ╭─[typescript/tests/cases/compiler/parseAssertEntriesError.ts:2:32]
  1 │ export type LocalInterface =
  2 │     & import("pkg", { assert: {1234, "resolution-mode": "require"} }).RequireInterface
-   ·                                    ┬
-   ·                                    ╰── `:` expected
+   ·                                ────
  3 │     & import("pkg", { assert: {1234, "resolution-mode": "import"} }).ImportInterface;
    ╰────
 
@@ -9204,12 +9235,11 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  3 │ }
    ╰────
 
-  × Expected `:` but found `,`
-   ╭─[typescript/tests/cases/compiler/parseImportAttributesError.ts:2:34]
+  × Unexpected token
+   ╭─[typescript/tests/cases/compiler/parseImportAttributesError.ts:2:30]
  1 │ export type LocalInterface =
  2 │     & import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface
-   ·                                  ┬
-   ·                                  ╰── `:` expected
+   ·                              ────
  3 │     & import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface;
    ╰────
 
@@ -19860,20 +19890,6 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ╰────
 
   × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.11.ts:3:8]
- 2 │ declare var require: any;
- 3 │ import await = require("./other");
-   ·        ─────
-   ╰────
-
-  × The keyword 'await' is reserved
-   ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.11.ts:3:8]
- 2 │ declare var require: any;
- 3 │ import await = require("./other");
-   ·        ─────
-   ╰────
-
-  × Cannot use `await` as an identifier in an async context
    ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.12.ts:5:8]
  4 │ // await disallowed in import=namespace when in a module
  5 │ import await = foo.await;
@@ -19945,25 +19961,11 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  3 │ }
    ╰────
 
-  × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.7.ts:2:13]
- 1 │ // await disallowed in namespace import
- 2 │ import * as await from "./other";
-   ·             ─────
-   ╰────
-
   × The keyword 'await' is reserved
    ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.7.ts:2:13]
  1 │ // await disallowed in namespace import
  2 │ import * as await from "./other";
    ·             ─────
-   ╰────
-
-  × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/externalModules/topLevelAwaitErrors.8.ts:2:8]
- 1 │ // await disallowed in default import
- 2 │ import await from "./other";
-   ·        ─────
    ╰────
 
   × The keyword 'await' is reserved
@@ -20195,11 +20197,12 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  9 │ const g = import('./0', {}, {})
    ╰────
 
-  × Unexpected token
+  × Expected `}` but found `,`
     ╭─[typescript/tests/cases/conformance/importAttributes/importAttributes10.ts:22:5]
  21 │     type: "json"
  22 │   },,
-    ·     ─
+    ·     ┬
+    ·     ╰── `}` expected
  23 │ });
     ╰────
 
@@ -20751,9 +20754,9 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ╰────
 
   × Expected `>` but found `<`
-   ╭─[typescript/tests/cases/conformance/jsx/jsxCheckJsxNoTypeArgumentsAllowed.tsx:4:16]
- 3 │ 
- 4 │ let x = <MyComp<Prop> a={10} b="hi" />; // error, no type arguments in js
+   ╭─[typescript/tests/cases/conformance/jsx/jsxCheckJsxNoTypeArgumentsAllowed.tsx:5:16]
+ 4 │ 
+ 5 │ let x = <MyComp<Prop> a={10} b="hi" />; // error, no type arguments in js
    ·                ┬
    ·                ╰── `>` expected
    ╰────
@@ -20884,91 +20887,91 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ╰────
 
   × Expected `,` or `}` but found `;`
-    ╭─[typescript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents1.tsx:41:16]
- 39 │ 
- 40 │ let o = {
+    ╭─[typescript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents1.tsx:43:16]
+ 41 │ 
+ 42 │ let o = {
     ·         ┬
     ·         ╰── Opened here
- 41 │     prop1: true;
+ 43 │     prop1: true;
     ·                ┬
     ·                ╰── `,` or `}` expected
- 42 │ }
-    ╰────
-
-  × TS(1099): Type argument list cannot be empty.
-    ╭─[typescript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx:24:12]
- 23 │ 
- 24 │ x = <MyComp<> a={10} b="hi" />; // error
-    ·            ──
- 25 │ 
+ 44 │ }
     ╰────
 
   × TS(1099): Type argument list cannot be empty.
     ╭─[typescript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx:26:12]
  25 │ 
- 26 │ x = <MyComp<> a={10} b="hi"></MyComp>; // error
+ 26 │ x = <MyComp<> a={10} b="hi" />; // error
     ·            ──
  27 │ 
     ╰────
 
+  × TS(1099): Type argument list cannot be empty.
+    ╭─[typescript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx:28:12]
+ 27 │ 
+ 28 │ x = <MyComp<> a={10} b="hi"></MyComp>; // error
+    ·            ──
+ 29 │ 
+    ╰────
+
   × Expected corresponding JSX closing tag for '\u0061'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:15:13]
- 14 │ // tag name:
- 15 │ ; <\u0061></a>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:16:13]
+ 15 │ // tag name:
+ 16 │ ; <\u0061></a>
     ·    ───┬──   ┬
     ·       │     ╰── Expected `</\u0061>`
     ·       ╰── Opened here
- 16 │ ; <\u0061-b></a-b>
+ 17 │ ; <\u0061-b></a-b>
     ╰────
 
   × Expected corresponding JSX closing tag for '\u0061-b'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:16:15]
- 15 │ ; <\u0061></a>
- 16 │ ; <\u0061-b></a-b>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:17:15]
+ 16 │ ; <\u0061></a>
+ 17 │ ; <\u0061-b></a-b>
     ·    ────┬───   ─┬─
     ·        │       ╰── Expected `</\u0061-b>`
     ·        ╰── Opened here
- 17 │ ; <a-\u0063></a-c>
+ 18 │ ; <a-\u0063></a-c>
     ╰────
 
   × Expected corresponding JSX closing tag for 'a-'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:17:15]
- 16 │ ; <\u0061-b></a-b>
- 17 │ ; <a-\u0063></a-c>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:18:15]
+ 17 │ ; <\u0061-b></a-b>
+ 18 │ ; <a-\u0063></a-c>
     ·    ─┬         ─┬─
     ·     │          ╰── Expected `</a->`
     ·     ╰── Opened here
- 18 │ ; <Comp\u0061 x={12} />
+ 19 │ ; <Comp\u0061 x={12} />
     ╰────
 
   × Expected corresponding JSX closing tag for '\u{0061}'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:20:15]
- 19 │ ; <x.\u0076ideo />
- 20 │ ; <\u{0061}></a>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:21:15]
+ 20 │ ; <x.\u0076ideo />
+ 21 │ ; <\u{0061}></a>
     ·    ────┬───   ┬
     ·        │      ╰── Expected `</\u{0061}>`
     ·        ╰── Opened here
- 21 │ ; <\u{0061}-b></a-b>
+ 22 │ ; <\u{0061}-b></a-b>
     ╰────
 
   × Expected corresponding JSX closing tag for '\u{0061}-b'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:21:17]
- 20 │ ; <\u{0061}></a>
- 21 │ ; <\u{0061}-b></a-b>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:22:17]
+ 21 │ ; <\u{0061}></a>
+ 22 │ ; <\u{0061}-b></a-b>
     ·    ─────┬────   ─┬─
     ·         │        ╰── Expected `</\u{0061}-b>`
     ·         ╰── Opened here
- 22 │ ; <a-\u{0063}></a-c>
+ 23 │ ; <a-\u{0063}></a-c>
     ╰────
 
   × Expected corresponding JSX closing tag for 'a-'.
-    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:22:17]
- 21 │ ; <\u{0061}-b></a-b>
- 22 │ ; <a-\u{0063}></a-c>
+    ╭─[typescript/tests/cases/conformance/jsx/unicodeEscapesInJsxtags.tsx:23:17]
+ 22 │ ; <\u{0061}-b></a-b>
+ 23 │ ; <a-\u{0063}></a-c>
     ·    ─┬           ─┬─
     ·     │            ╰── Expected `</a->`
     ·     ╰── Opened here
- 23 │ ; <Comp\u{0061} x={12} />
+ 24 │ ; <Comp\u{0061} x={12} />
     ╰────
 
   × TS(8002): 'import ... =' can only be used in TypeScript files.
@@ -21112,22 +21115,66 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ╰────
   help: TypeScript transforms 'import ... =' to 'const ... ='
 
-  × Expected `{` but found `[`
-   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts:3:21]
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts:3:22]
  2 │ export type LocalInterface =
- 3 │     & import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface
-   ·                     ┬
-   ·                     ╰── `{` expected
- 4 │     & import("pkg", [ {"resolution-mode": "import"} ]).ImportInterface;
+ 3 │     & import("pkg", {"resolution-mode": "require"}).RequireInterface
+   ·                      ─────────────────
+ 4 │     & import("pkg", {"resolution-mode": "import"}).ImportInterface;
    ╰────
 
-  × Expected `{` but found `[`
-   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts:3:21]
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts:4:22]
+ 3 │     & import("pkg", {"resolution-mode": "require"}).RequireInterface
+ 4 │     & import("pkg", {"resolution-mode": "import"}).ImportInterface;
+   ·                      ─────────────────
+ 5 │ 
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts:6:49]
+ 5 │ 
+ 6 │ export const a = (null as any as import("pkg", {"resolution-mode": "require"}).RequireInterface);
+   ·                                                 ─────────────────
+ 7 │ export const b = (null as any as import("pkg", {"resolution-mode": "import"}).ImportInterface);
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportAttributesTypeModeDeclarationEmitErrors.ts:7:49]
+ 6 │ export const a = (null as any as import("pkg", {"resolution-mode": "require"}).RequireInterface);
+ 7 │ export const b = (null as any as import("pkg", {"resolution-mode": "import"}).ImportInterface);
+   ·                                                 ─────────────────
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts:3:22]
  2 │ export type LocalInterface =
- 3 │     & import("pkg", [ {"resolution-mode": "require"} ]).RequireInterface
-   ·                     ┬
-   ·                     ╰── `{` expected
- 4 │     & import("pkg", [ {"resolution-mode": "import"} ]).ImportInterface;
+ 3 │     & import("pkg", {"resolution-mode": "require"}).RequireInterface
+   ·                      ─────────────────
+ 4 │     & import("pkg", {"resolution-mode": "import"}).ImportInterface;
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts:4:22]
+ 3 │     & import("pkg", {"resolution-mode": "require"}).RequireInterface
+ 4 │     & import("pkg", {"resolution-mode": "import"}).ImportInterface;
+   ·                      ─────────────────
+ 5 │ 
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts:6:49]
+ 5 │ 
+ 6 │ export const a = (null as any as import("pkg", {"resolution-mode": "require"}).RequireInterface);
+   ·                                                 ─────────────────
+ 7 │ export const b = (null as any as import("pkg", {"resolution-mode": "import"}).ImportInterface);
+   ╰────
+
+  × Expected 'with' in import type options
+   ╭─[typescript/tests/cases/conformance/node/nodeModulesImportTypeModeDeclarationEmitErrors1.ts:7:49]
+ 6 │ export const a = (null as any as import("pkg", {"resolution-mode": "require"}).RequireInterface);
+ 7 │ export const b = (null as any as import("pkg", {"resolution-mode": "import"}).ImportInterface);
+   ·                                                 ─────────────────
    ╰────
 
   × TS(1030): 'override' modifier already seen.
@@ -21183,36 +21230,14 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  3 │     }
    ╰────
 
-  × The keyword 'await' is reserved
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts:2:15]
- 1 │ class C4 {
- 2 │     async * f(await) {
-   ·               ─────
- 3 │     }
-   ╰────
-
   × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts:1:18]
- 1 │ async function * await() {
-   ·                  ─────
- 2 │ }
-   ╰────
-
-  × The keyword 'await' is reserved
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts:1:18]
- 1 │ async function * await() {
-   ·                  ─────
+   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts:1:21]
+ 1 │ async function * f4(await) {
+   ·                     ─────
  2 │ }
    ╰────
 
   × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts:1:29]
- 1 │ const f2 = async function * await() {
-   ·                             ─────
- 2 │ };
-   ╰────
-
-  × The keyword 'await' is reserved
    ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts:1:29]
  1 │ const f2 = async function * await() {
    ·                             ─────
@@ -21227,21 +21252,13 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  3 │     }
    ╰────
 
-  × The keyword 'await' is reserved
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts:2:15]
- 1 │ const o4 = {
- 2 │     async * f(await) {
-   ·               ─────
- 3 │     }
-   ╰────
-
-  × await can only be used in conjunction with `for...of` statements
-   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts:1:1]
- 1 │ for await (const x in y) {
-   · ────────────────────────
+  × `await` is only allowed within async functions and at the top levels of modules
+   ╭─[typescript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts:1:5]
+ 1 │ for await (const x of y) {
+   ·     ─────
  2 │ }
    ╰────
-  help: Did you mean to use a for...of statement?
+  help: Either remove this `await` or add the `async` keyword to the enclosing function
 
   × Invalid Character `
   │ `
@@ -22463,6 +22480,27 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
  1 │ 1 >>
  2 │ > 2;
    · ─
+   ╰────
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/conformance/parser/ecmascript5/Generics/parserMemberAccessExpression1.ts:3:1]
+ 2 │ Foo.Bar<T>();
+ 3 │ Foo<T>.Bar();
+   · ───────
+ 4 │ Foo<T>.Bar<T>();
+   ╰────
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/conformance/parser/ecmascript5/Generics/parserMemberAccessExpression1.ts:4:1]
+ 3 │ Foo<T>.Bar();
+ 4 │ Foo<T>.Bar<T>();
+   · ───────
+   ╰────
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/conformance/parser/ecmascript5/Generics/parserMemberAccessOffOfGenericType1.ts:1:9]
+ 1 │ var v = List<number>.makeChild();
+   ·         ─────────────
    ╰────
 
   × Expected `;` but found `[`
@@ -24514,13 +24552,6 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
    ╭─[typescript/tests/cases/conformance/scanner/ecmascript5/scannerUnicodeEscapeInKeyword1.ts:1:1]
  1 │ \u0076ar x = "hello";
    · ────────
-   ╰────
-
-  × Cannot use `await` as an identifier in an async context
-   ╭─[typescript/tests/cases/conformance/scanner/ecmascript5/scannerUnicodeEscapeInKeyword2.ts:1:5]
- 1 │ var \u0061wait = 12; // ok
-   ·     ──────────
- 2 │ async function main() {
    ╰────
 
   × Keywords cannot contain escape characters
@@ -26788,6 +26819,22 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/statements/Va
     ·       ╰── It can not be redeclared here
  12 │ 
     ╰────
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts:7:12]
+ 6 │ const a2 = f.g<number>;  // () => number
+ 7 │ const a3 = f<number>.g;  // <U>() => U
+   ·            ──────────
+ 8 │ const a4 = f<number>.g<number>;  // () => number
+   ╰────
+
+  × TS(1477): An instantiation expression cannot be followed by a property access.
+   ╭─[typescript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts:8:12]
+ 7 │ const a3 = f<number>.g;  // <U>() => U
+ 8 │ const a4 = f<number>.g<number>;  // () => number
+   ·            ──────────
+ 9 │ const a5 = f['g']<number>;  // () => number
+   ╰────
 
   × Unexpected token
     ╭─[typescript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts:18:29]
