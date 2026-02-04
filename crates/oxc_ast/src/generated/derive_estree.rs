@@ -14,47 +14,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl ESTree for AstroRoot<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        let mut state = serializer.serialize_struct();
-        state.serialize_field("type", &JsonSafeString("AstroRoot"));
-        state.serialize_field("frontmatter", &self.frontmatter);
-        state.serialize_field("body", &self.body);
-        state.serialize_span(self.span);
-        state.end();
-    }
-}
-
-impl ESTree for AstroFrontmatter<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        let mut state = serializer.serialize_struct();
-        state.serialize_field("type", &JsonSafeString("AstroFrontmatter"));
-        state.serialize_field("program", &self.program);
-        state.serialize_span(self.span);
-        state.end();
-    }
-}
-
-impl ESTree for AstroScript<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        let mut state = serializer.serialize_struct();
-        state.serialize_field("type", &JsonSafeString("AstroScript"));
-        state.serialize_field("program", &self.program);
-        state.serialize_span(self.span);
-        state.end();
-    }
-}
-
-impl ESTree for AstroDoctype<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) {
-        let mut state = serializer.serialize_struct();
-        state.serialize_field("type", &JsonSafeString("AstroDoctype"));
-        state.serialize_field("value", &self.value);
-        state.serialize_span(self.span);
-        state.end();
-    }
-}
-
 impl ESTree for Program<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
         crate::serialize::ProgramConverter(self).serialize(serializer)
@@ -3276,6 +3235,47 @@ impl ESTree for Comment {
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &self.kind);
         state.serialize_field("value", &crate::serialize::CommentValue(self));
+        state.serialize_span(self.span);
+        state.end();
+    }
+}
+
+impl ESTree for AstroRoot<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("AstroRoot"));
+        state.serialize_field("frontmatter", &self.frontmatter);
+        state.serialize_field("body", &self.body);
+        state.serialize_span(self.span);
+        state.end();
+    }
+}
+
+impl ESTree for AstroFrontmatter<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("AstroFrontmatter"));
+        state.serialize_field("program", &self.program);
+        state.serialize_span(self.span);
+        state.end();
+    }
+}
+
+impl ESTree for AstroScript<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("AstroScript"));
+        state.serialize_field("program", &self.program);
+        state.serialize_span(self.span);
+        state.end();
+    }
+}
+
+impl ESTree for AstroDoctype<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("AstroDoctype"));
+        state.serialize_field("value", &self.value);
         state.serialize_span(self.span);
         state.end();
     }

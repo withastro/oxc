@@ -9,14 +9,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl UnstableAddress for AstroRoot<'_> {}
-
-impl UnstableAddress for AstroFrontmatter<'_> {}
-
-impl UnstableAddress for AstroScript<'_> {}
-
-impl UnstableAddress for AstroDoctype<'_> {}
-
 impl UnstableAddress for Program<'_> {}
 
 impl UnstableAddress for IdentifierName<'_> {}
@@ -392,3 +384,11 @@ impl UnstableAddress for JSDocNullableType<'_> {}
 impl UnstableAddress for JSDocNonNullableType<'_> {}
 
 impl UnstableAddress for JSDocUnknownType {}
+
+impl UnstableAddress for AstroRoot<'_> {}
+
+impl UnstableAddress for AstroFrontmatter<'_> {}
+
+impl UnstableAddress for AstroScript<'_> {}
+
+impl UnstableAddress for AstroDoctype<'_> {}

@@ -34,30 +34,6 @@ export function resetBuffer() {
   uint8 = uint32 = float64 = sourceText = void 0;
 }
 
-function deserializeAstroScript(pos) {
-  let previousParent = parent,
-    node = (parent = {
-      type: "AstroScript",
-      program: null,
-      start: deserializeU32(pos),
-      end: deserializeU32(pos + 4),
-      parent,
-    });
-  node.program = deserializeProgram(pos + 8);
-  parent = previousParent;
-  return node;
-}
-
-function deserializeAstroDoctype(pos) {
-  return {
-    type: "AstroDoctype",
-    value: deserializeStr(pos + 8),
-    start: deserializeU32(pos),
-    end: deserializeU32(pos + 4),
-    parent,
-  };
-}
-
 function deserializeProgram(pos) {
   let start = deserializeU32(pos),
     end = deserializeU32(pos + 4),
@@ -4690,6 +4666,30 @@ function deserializeComment(pos) {
   };
 }
 
+function deserializeAstroScript(pos) {
+  let previousParent = parent,
+    node = (parent = {
+      type: "AstroScript",
+      program: null,
+      start: deserializeU32(pos),
+      end: deserializeU32(pos + 4),
+      parent,
+    });
+  node.program = deserializeProgram(pos + 8);
+  parent = previousParent;
+  return node;
+}
+
+function deserializeAstroDoctype(pos) {
+  return {
+    type: "AstroDoctype",
+    value: deserializeStr(pos + 8),
+    start: deserializeU32(pos),
+    end: deserializeU32(pos + 4),
+    parent,
+  };
+}
+
 function deserializeNameSpan(pos) {
   return {
     value: deserializeStr(pos + 8),
@@ -5080,18 +5080,6 @@ function deserializeU32(pos) {
 
 function deserializeU8(pos) {
   return uint8[pos];
-}
-
-function deserializeVecJSXChild(pos) {
-  let arr = [],
-    pos32 = pos >> 2;
-  pos = uint32[pos32];
-  let endPos = pos + uint32[pos32 + 2] * 16;
-  for (; pos !== endPos; ) {
-    arr.push(deserializeJSXChild(pos));
-    pos += 16;
-  }
-  return arr;
 }
 
 function deserializeStr(pos) {
@@ -5926,6 +5914,18 @@ function deserializeF64(pos) {
 
 function deserializeBoxJSXOpeningElement(pos) {
   return deserializeJSXOpeningElement(uint32[pos >> 2]);
+}
+
+function deserializeVecJSXChild(pos) {
+  let arr = [],
+    pos32 = pos >> 2;
+  pos = uint32[pos32];
+  let endPos = pos + uint32[pos32 + 2] * 16;
+  for (; pos !== endPos; ) {
+    arr.push(deserializeJSXChild(pos));
+    pos += 16;
+  }
+  return arr;
 }
 
 function deserializeBoxJSXClosingElement(pos) {

@@ -11,34 +11,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl GetSpanMut for AstroRoot<'_> {
-    #[inline]
-    fn span_mut(&mut self) -> &mut Span {
-        &mut self.span
-    }
-}
-
-impl GetSpanMut for AstroFrontmatter<'_> {
-    #[inline]
-    fn span_mut(&mut self) -> &mut Span {
-        &mut self.span
-    }
-}
-
-impl GetSpanMut for AstroScript<'_> {
-    #[inline]
-    fn span_mut(&mut self) -> &mut Span {
-        &mut self.span
-    }
-}
-
-impl GetSpanMut for AstroDoctype<'_> {
-    #[inline]
-    fn span_mut(&mut self) -> &mut Span {
-        &mut self.span
-    }
-}
-
 impl GetSpanMut for Program<'_> {
     #[inline]
     fn span_mut(&mut self) -> &mut Span {
@@ -2205,6 +2177,34 @@ impl GetSpanMut for JSDocNonNullableType<'_> {
 }
 
 impl GetSpanMut for JSDocUnknownType {
+    #[inline]
+    fn span_mut(&mut self) -> &mut Span {
+        &mut self.span
+    }
+}
+
+impl GetSpanMut for AstroRoot<'_> {
+    #[inline]
+    fn span_mut(&mut self) -> &mut Span {
+        &mut self.span
+    }
+}
+
+impl GetSpanMut for AstroFrontmatter<'_> {
+    #[inline]
+    fn span_mut(&mut self) -> &mut Span {
+        &mut self.span
+    }
+}
+
+impl GetSpanMut for AstroScript<'_> {
+    #[inline]
+    fn span_mut(&mut self) -> &mut Span {
+        &mut self.span
+    }
+}
+
+impl GetSpanMut for AstroDoctype<'_> {
     #[inline]
     fn span_mut(&mut self) -> &mut Span {
         &mut self.span

@@ -11,46 +11,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl<'a> Dummy<'a> for AstroRoot<'a> {
-    /// Create a dummy [`AstroRoot`].
-    ///
-    /// Does not allocate any data into arena.
-    fn dummy(allocator: &'a Allocator) -> Self {
-        Self {
-            span: Dummy::dummy(allocator),
-            frontmatter: Dummy::dummy(allocator),
-            body: Dummy::dummy(allocator),
-        }
-    }
-}
-
-impl<'a> Dummy<'a> for AstroFrontmatter<'a> {
-    /// Create a dummy [`AstroFrontmatter`].
-    ///
-    /// Does not allocate any data into arena.
-    fn dummy(allocator: &'a Allocator) -> Self {
-        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
-    }
-}
-
-impl<'a> Dummy<'a> for AstroScript<'a> {
-    /// Create a dummy [`AstroScript`].
-    ///
-    /// Does not allocate any data into arena.
-    fn dummy(allocator: &'a Allocator) -> Self {
-        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
-    }
-}
-
-impl<'a> Dummy<'a> for AstroDoctype<'a> {
-    /// Create a dummy [`AstroDoctype`].
-    ///
-    /// Does not allocate any data into arena.
-    fn dummy(allocator: &'a Allocator) -> Self {
-        Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
-    }
-}
-
 impl<'a> Dummy<'a> for Program<'a> {
     /// Create a dummy [`Program`].
     ///
@@ -2959,5 +2919,45 @@ impl<'a> Dummy<'a> for JSDocUnknownType {
     /// Does not allocate any data into arena.
     fn dummy(allocator: &'a Allocator) -> Self {
         Self { span: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroRoot<'a> {
+    /// Create a dummy [`AstroRoot`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self {
+            span: Dummy::dummy(allocator),
+            frontmatter: Dummy::dummy(allocator),
+            body: Dummy::dummy(allocator),
+        }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroFrontmatter<'a> {
+    /// Create a dummy [`AstroFrontmatter`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroScript<'a> {
+    /// Create a dummy [`AstroScript`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroDoctype<'a> {
+    /// Create a dummy [`AstroDoctype`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
     }
 }

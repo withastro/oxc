@@ -211,12 +211,14 @@ use utils::create_ident;
 /// Paths to source files containing AST types
 static SOURCE_PATHS: &[&str] = &[
     "crates/oxc_allocator/src/pool/fixed_size.rs",
-    "crates/oxc_ast/src/ast/astro.rs",
     "crates/oxc_ast/src/ast/js.rs",
     "crates/oxc_ast/src/ast/literal.rs",
     "crates/oxc_ast/src/ast/jsx.rs",
     "crates/oxc_ast/src/ast/ts.rs",
     "crates/oxc_ast/src/ast/comment.rs",
+    // Astro is placed last so its AST types get higher discriminants,
+    // avoiding changing the discriminants of existing JS/TS types.
+    "crates/oxc_ast/src/ast/astro.rs",
     "crates/oxc_ast/src/serialize/mod.rs",
     "crates/oxc_ast/src/serialize/basic.rs",
     "crates/oxc_ast/src/serialize/literal.rs",

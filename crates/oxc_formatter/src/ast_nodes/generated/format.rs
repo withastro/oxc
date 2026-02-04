@@ -13,58 +13,6 @@ use crate::{
     utils::{suppressed::FormatSuppressedNode, typecast::format_type_cast_comment_node},
 };
 
-impl<'a> Format<'a> for AstNode<'a, AstroRoot<'a>> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
-        let is_suppressed = f.comments().is_suppressed(self.span().start);
-        self.format_leading_comments(f);
-        if is_suppressed {
-            FormatSuppressedNode(self.span()).fmt(f);
-        } else {
-            self.write(f);
-        }
-        self.format_trailing_comments(f);
-    }
-}
-
-impl<'a> Format<'a> for AstNode<'a, AstroFrontmatter<'a>> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
-        let is_suppressed = f.comments().is_suppressed(self.span().start);
-        self.format_leading_comments(f);
-        if is_suppressed {
-            FormatSuppressedNode(self.span()).fmt(f);
-        } else {
-            self.write(f);
-        }
-        self.format_trailing_comments(f);
-    }
-}
-
-impl<'a> Format<'a> for AstNode<'a, AstroScript<'a>> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
-        let is_suppressed = f.comments().is_suppressed(self.span().start);
-        self.format_leading_comments(f);
-        if is_suppressed {
-            FormatSuppressedNode(self.span()).fmt(f);
-        } else {
-            self.write(f);
-        }
-        self.format_trailing_comments(f);
-    }
-}
-
-impl<'a> Format<'a> for AstNode<'a, AstroDoctype<'a>> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
-        let is_suppressed = f.comments().is_suppressed(self.span().start);
-        self.format_leading_comments(f);
-        if is_suppressed {
-            FormatSuppressedNode(self.span()).fmt(f);
-        } else {
-            self.write(f);
-        }
-        self.format_trailing_comments(f);
-    }
-}
-
 impl<'a> Format<'a> for AstNode<'a, Program<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) {
         self.write(f);
@@ -5740,6 +5688,58 @@ impl<'a> Format<'a> for AstNode<'a, JSDocNonNullableType<'a>> {
 }
 
 impl<'a> Format<'a> for AstNode<'a, JSDocUnknownType> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        let is_suppressed = f.comments().is_suppressed(self.span().start);
+        self.format_leading_comments(f);
+        if is_suppressed {
+            FormatSuppressedNode(self.span()).fmt(f);
+        } else {
+            self.write(f);
+        }
+        self.format_trailing_comments(f);
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, AstroRoot<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        let is_suppressed = f.comments().is_suppressed(self.span().start);
+        self.format_leading_comments(f);
+        if is_suppressed {
+            FormatSuppressedNode(self.span()).fmt(f);
+        } else {
+            self.write(f);
+        }
+        self.format_trailing_comments(f);
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, AstroFrontmatter<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        let is_suppressed = f.comments().is_suppressed(self.span().start);
+        self.format_leading_comments(f);
+        if is_suppressed {
+            FormatSuppressedNode(self.span()).fmt(f);
+        } else {
+            self.write(f);
+        }
+        self.format_trailing_comments(f);
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, AstroScript<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        let is_suppressed = f.comments().is_suppressed(self.span().start);
+        self.format_leading_comments(f);
+        if is_suppressed {
+            FormatSuppressedNode(self.span()).fmt(f);
+        } else {
+            self.write(f);
+        }
+        self.format_trailing_comments(f);
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, AstroDoctype<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) {
         let is_suppressed = f.comments().is_suppressed(self.span().start);
         self.format_leading_comments(f);

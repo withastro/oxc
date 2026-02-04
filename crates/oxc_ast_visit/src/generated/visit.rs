@@ -41,26 +41,6 @@ pub trait Visit<'a>: Sized {
     }
 
     #[inline]
-    fn visit_astro_root(&mut self, it: &AstroRoot<'a>) {
-        walk_astro_root(self, it);
-    }
-
-    #[inline]
-    fn visit_astro_frontmatter(&mut self, it: &AstroFrontmatter<'a>) {
-        walk_astro_frontmatter(self, it);
-    }
-
-    #[inline]
-    fn visit_astro_script(&mut self, it: &AstroScript<'a>) {
-        walk_astro_script(self, it);
-    }
-
-    #[inline]
-    fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
-        walk_astro_doctype(self, it);
-    }
-
-    #[inline]
     fn visit_program(&mut self, it: &Program<'a>) {
         walk_program(self, it);
     }
@@ -1220,13 +1200,28 @@ pub trait Visit<'a>: Sized {
     }
 
     #[inline]
-    fn visit_span(&mut self, it: &Span) {
-        walk_span(self, it);
+    fn visit_astro_root(&mut self, it: &AstroRoot<'a>) {
+        walk_astro_root(self, it);
     }
 
     #[inline]
-    fn visit_jsx_children(&mut self, it: &Vec<'a, JSXChild<'a>>) {
-        walk_jsx_children(self, it);
+    fn visit_astro_frontmatter(&mut self, it: &AstroFrontmatter<'a>) {
+        walk_astro_frontmatter(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_script(&mut self, it: &AstroScript<'a>) {
+        walk_astro_script(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
+        walk_astro_doctype(self, it);
+    }
+
+    #[inline]
+    fn visit_span(&mut self, it: &Span) {
+        walk_span(self, it);
     }
 
     #[inline]
@@ -1323,6 +1318,11 @@ pub trait Visit<'a>: Sized {
     }
 
     #[inline]
+    fn visit_jsx_children(&mut self, it: &Vec<'a, JSXChild<'a>>) {
+        walk_jsx_children(self, it);
+    }
+
+    #[inline]
     fn visit_jsx_attribute_items(&mut self, it: &Vec<'a, JSXAttributeItem<'a>>) {
         walk_jsx_attribute_items(self, it);
     }
@@ -1370,44 +1370,6 @@ pub trait Visit<'a>: Sized {
 
 pub mod walk {
     use super::*;
-
-    #[inline]
-    pub fn walk_astro_root<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroRoot<'a>) {
-        let kind = AstKind::AstroRoot(visitor.alloc(it));
-        visitor.enter_node(kind);
-        visitor.visit_span(&it.span);
-        if let Some(frontmatter) = &it.frontmatter {
-            visitor.visit_astro_frontmatter(frontmatter);
-        }
-        visitor.visit_jsx_children(&it.body);
-        visitor.leave_node(kind);
-    }
-
-    #[inline]
-    pub fn walk_astro_frontmatter<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroFrontmatter<'a>) {
-        let kind = AstKind::AstroFrontmatter(visitor.alloc(it));
-        visitor.enter_node(kind);
-        visitor.visit_span(&it.span);
-        visitor.visit_program(&it.program);
-        visitor.leave_node(kind);
-    }
-
-    #[inline]
-    pub fn walk_astro_script<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroScript<'a>) {
-        let kind = AstKind::AstroScript(visitor.alloc(it));
-        visitor.enter_node(kind);
-        visitor.visit_span(&it.span);
-        visitor.visit_program(&it.program);
-        visitor.leave_node(kind);
-    }
-
-    #[inline]
-    pub fn walk_astro_doctype<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroDoctype<'a>) {
-        let kind = AstKind::AstroDoctype(visitor.alloc(it));
-        visitor.enter_node(kind);
-        visitor.visit_span(&it.span);
-        visitor.leave_node(kind);
-    }
 
     #[inline]
     pub fn walk_program<'a, V: Visit<'a>>(visitor: &mut V, it: &Program<'a>) {
@@ -4294,15 +4256,46 @@ pub mod walk {
     }
 
     #[inline]
-    pub fn walk_span<'a, V: Visit<'a>>(visitor: &mut V, it: &Span) {
-        // No `AstKind` for this type
+    pub fn walk_astro_root<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroRoot<'a>) {
+        let kind = AstKind::AstroRoot(visitor.alloc(it));
+        visitor.enter_node(kind);
+        visitor.visit_span(&it.span);
+        if let Some(frontmatter) = &it.frontmatter {
+            visitor.visit_astro_frontmatter(frontmatter);
+        }
+        visitor.visit_jsx_children(&it.body);
+        visitor.leave_node(kind);
     }
 
     #[inline]
-    pub fn walk_jsx_children<'a, V: Visit<'a>>(visitor: &mut V, it: &Vec<'a, JSXChild<'a>>) {
-        for el in it {
-            visitor.visit_jsx_child(el);
-        }
+    pub fn walk_astro_frontmatter<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroFrontmatter<'a>) {
+        let kind = AstKind::AstroFrontmatter(visitor.alloc(it));
+        visitor.enter_node(kind);
+        visitor.visit_span(&it.span);
+        visitor.visit_program(&it.program);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_script<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroScript<'a>) {
+        let kind = AstKind::AstroScript(visitor.alloc(it));
+        visitor.enter_node(kind);
+        visitor.visit_span(&it.span);
+        visitor.visit_program(&it.program);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_doctype<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroDoctype<'a>) {
+        let kind = AstKind::AstroDoctype(visitor.alloc(it));
+        visitor.enter_node(kind);
+        visitor.visit_span(&it.span);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_span<'a, V: Visit<'a>>(visitor: &mut V, it: &Span) {
+        // No `AstKind` for this type
     }
 
     #[inline]
@@ -4468,6 +4461,13 @@ pub mod walk {
     ) {
         for el in it {
             visitor.visit_export_specifier(el);
+        }
+    }
+
+    #[inline]
+    pub fn walk_jsx_children<'a, V: Visit<'a>>(visitor: &mut V, it: &Vec<'a, JSXChild<'a>>) {
+        for el in it {
+            visitor.visit_jsx_child(el);
         }
     }
 

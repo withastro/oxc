@@ -1,8 +1,8 @@
 commit: 95e3aaa9
 
 parser_typescript Summary:
-AST Parsed     : 9838/9843 (99.95%)
-Positive Passed: 9834/9843 (99.91%)
+AST Parsed     : 9842/9843 (99.99%)
+Positive Passed: 9838/9843 (99.95%)
 Negative Passed: 1514/2557 (59.21%)
 Expect Syntax Error: tasks/coverage/typescript/tests/cases/compiler/FunctionDeclaration3.ts
 
@@ -2113,44 +2113,6 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/async/es6/asy
      ·             ╰── It can not be redeclared here
  132 │     }
      ╰────
-
-Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName1.tsx
-
-  × Unexpected token
-   ╭─[typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName1.tsx:2:16]
- 1 │ const a = <svg:path a:b={1}></svg:path>;
- 2 │ const b = <svg : path a:b={1}></svg : path>;
-   ·                ─
-   ╰────
-
-Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName2.tsx
-
-  × Unexpected token
-   ╭─[typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName2.tsx:4:16]
- 3 │ const a = <svg:path a:b={1}></svg:path>;
- 4 │ const b = <svg : path a:b={1}></svg : path>;
-   ·                ─
-   ╰────
-
-Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedTagName1.tsx
-
-  × Unexpected token
-   ╭─[typescript/tests/cases/conformance/jsx/tsxNamespacedTagName1.tsx:2:16]
- 1 │ const a = <svg:path></svg:path>;
- 2 │ const b = <svg : path></svg : path>;
-   ·                ─
- 3 │ const c = <A:foo></A:foo>;
-   ╰────
-
-Panicked: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedTagName2.tsx
-
-  × Unexpected token
-   ╭─[typescript/tests/cases/conformance/jsx/tsxNamespacedTagName2.tsx:4:16]
- 3 │ const a = <svg:path></svg:path>;
- 4 │ const b = <svg : path></svg : path>;
-   ·                ─
- 5 │ const c = <A:foo></A:foo>;
-   ╰────
 
 Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/ComputedPropertyNames/parserES5ComputedPropertyName11.ts
 

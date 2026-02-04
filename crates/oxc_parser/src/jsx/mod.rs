@@ -451,9 +451,7 @@ impl<'a> ParserImpl<'a> {
                 Kind::LCurly => {
                     // In Astro, `{prop}` can be shorthand for `prop={prop}`
                     #[cfg(feature = "astro")]
-                    if is_astro
-                        && let Some(attr) = self.try_parse_astro_shorthand_attribute()
-                    {
+                    if is_astro && let Some(attr) = self.try_parse_astro_shorthand_attribute() {
                         attributes.push(JSXAttributeItem::Attribute(attr));
                         continue;
                     }

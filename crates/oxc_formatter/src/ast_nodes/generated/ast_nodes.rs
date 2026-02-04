@@ -24,10 +24,6 @@ pub(super) fn transmute_self<'a, T>(s: &AstNode<'a, T>) -> &'a AstNode<'a, T> {
 #[derive(Clone, Copy)]
 pub enum AstNodes<'a> {
     Dummy(),
-    AstroRoot(&'a AstNode<'a, AstroRoot<'a>>),
-    AstroFrontmatter(&'a AstNode<'a, AstroFrontmatter<'a>>),
-    AstroScript(&'a AstNode<'a, AstroScript<'a>>),
-    AstroDoctype(&'a AstNode<'a, AstroDoctype<'a>>),
     Program(&'a AstNode<'a, Program<'a>>),
     IdentifierName(&'a AstNode<'a, IdentifierName<'a>>),
     IdentifierReference(&'a AstNode<'a, IdentifierReference<'a>>),
@@ -216,16 +212,16 @@ pub enum AstNodes<'a> {
     JSDocNullableType(&'a AstNode<'a, JSDocNullableType<'a>>),
     JSDocNonNullableType(&'a AstNode<'a, JSDocNonNullableType<'a>>),
     JSDocUnknownType(&'a AstNode<'a, JSDocUnknownType>),
+    AstroRoot(&'a AstNode<'a, AstroRoot<'a>>),
+    AstroFrontmatter(&'a AstNode<'a, AstroFrontmatter<'a>>),
+    AstroScript(&'a AstNode<'a, AstroScript<'a>>),
+    AstroDoctype(&'a AstNode<'a, AstroDoctype<'a>>),
 }
 impl AstNodes<'_> {
     #[inline]
     pub fn span(&self) -> Span {
         match self {
             Self::Dummy() => panic!("Should never be called on a dummy node"),
-            Self::AstroRoot(n) => n.span(),
-            Self::AstroFrontmatter(n) => n.span(),
-            Self::AstroScript(n) => n.span(),
-            Self::AstroDoctype(n) => n.span(),
             Self::Program(n) => n.span(),
             Self::IdentifierName(n) => n.span(),
             Self::IdentifierReference(n) => n.span(),
@@ -414,16 +410,16 @@ impl AstNodes<'_> {
             Self::JSDocNullableType(n) => n.span(),
             Self::JSDocNonNullableType(n) => n.span(),
             Self::JSDocUnknownType(n) => n.span(),
+            Self::AstroRoot(n) => n.span(),
+            Self::AstroFrontmatter(n) => n.span(),
+            Self::AstroScript(n) => n.span(),
+            Self::AstroDoctype(n) => n.span(),
         }
     }
     #[inline]
     pub fn parent(&self) -> &Self {
         match self {
             Self::Dummy() => panic!("Should never be called on a dummy node"),
-            Self::AstroRoot(n) => n.parent(),
-            Self::AstroFrontmatter(n) => n.parent(),
-            Self::AstroScript(n) => n.parent(),
-            Self::AstroDoctype(n) => n.parent(),
             Self::Program(n) => n.parent(),
             Self::IdentifierName(n) => n.parent(),
             Self::IdentifierReference(n) => n.parent(),
@@ -612,16 +608,16 @@ impl AstNodes<'_> {
             Self::JSDocNullableType(n) => n.parent(),
             Self::JSDocNonNullableType(n) => n.parent(),
             Self::JSDocUnknownType(n) => n.parent(),
+            Self::AstroRoot(n) => n.parent(),
+            Self::AstroFrontmatter(n) => n.parent(),
+            Self::AstroScript(n) => n.parent(),
+            Self::AstroDoctype(n) => n.parent(),
         }
     }
     #[inline]
     pub fn debug_name(&self) -> &'static str {
         match self {
             Self::Dummy() => "Dummy",
-            Self::AstroRoot(_) => "AstroRoot",
-            Self::AstroFrontmatter(_) => "AstroFrontmatter",
-            Self::AstroScript(_) => "AstroScript",
-            Self::AstroDoctype(_) => "AstroDoctype",
             Self::Program(_) => "Program",
             Self::IdentifierName(_) => "IdentifierName",
             Self::IdentifierReference(_) => "IdentifierReference",
@@ -810,108 +806,11 @@ impl AstNodes<'_> {
             Self::JSDocNullableType(_) => "JSDocNullableType",
             Self::JSDocNonNullableType(_) => "JSDocNonNullableType",
             Self::JSDocUnknownType(_) => "JSDocUnknownType",
+            Self::AstroRoot(_) => "AstroRoot",
+            Self::AstroFrontmatter(_) => "AstroFrontmatter",
+            Self::AstroScript(_) => "AstroScript",
+            Self::AstroDoctype(_) => "AstroDoctype",
         }
-    }
-}
-
-impl<'a> AstNode<'a, AstroRoot<'a>> {
-    #[inline]
-    pub fn frontmatter(&self) -> Option<&AstNode<'a, AstroFrontmatter<'a>>> {
-        let following_span_start = self
-            .inner
-            .body
-            .first()
-            .map(|n| n.span().start)
-            .or(Some(self.following_span_start))
-            .unwrap_or(0);
-        self.allocator
-            .alloc(self.inner.frontmatter.as_ref().map(|inner| AstNode {
-                inner: inner.as_ref(),
-                allocator: self.allocator,
-                parent: AstNodes::AstroRoot(transmute_self(self)),
-                following_span_start,
-            }))
-            .as_ref()
-    }
-
-    #[inline]
-    pub fn body(&self) -> &AstNode<'a, Vec<'a, JSXChild<'a>>> {
-        let following_span_start = self.following_span_start;
-        self.allocator.alloc(AstNode {
-            inner: &self.inner.body,
-            allocator: self.allocator,
-            parent: AstNodes::AstroRoot(transmute_self(self)),
-            following_span_start,
-        })
-    }
-
-    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_leading_comments(self.span()).fmt(f);
-    }
-
-    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
-            .fmt(f);
-    }
-}
-
-impl<'a> AstNode<'a, AstroFrontmatter<'a>> {
-    #[inline]
-    pub fn program(&self) -> &AstNode<'a, Program<'a>> {
-        let following_span_start = self.following_span_start;
-        self.allocator.alloc(AstNode {
-            inner: &self.inner.program,
-            allocator: self.allocator,
-            parent: AstNodes::AstroFrontmatter(transmute_self(self)),
-            following_span_start,
-        })
-    }
-
-    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_leading_comments(self.span()).fmt(f);
-    }
-
-    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
-            .fmt(f);
-    }
-}
-
-impl<'a> AstNode<'a, AstroScript<'a>> {
-    #[inline]
-    pub fn program(&self) -> &AstNode<'a, Program<'a>> {
-        let following_span_start = self.following_span_start;
-        self.allocator.alloc(AstNode {
-            inner: &self.inner.program,
-            allocator: self.allocator,
-            parent: AstNodes::AstroScript(transmute_self(self)),
-            following_span_start,
-        })
-    }
-
-    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_leading_comments(self.span()).fmt(f);
-    }
-
-    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
-            .fmt(f);
-    }
-}
-
-impl<'a> AstNode<'a, AstroDoctype<'a>> {
-    #[inline]
-    pub fn value(&self) -> Atom<'a> {
-        self.inner.value
-    }
-
-    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_leading_comments(self.span()).fmt(f);
-    }
-
-    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
-        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
-            .fmt(f);
     }
 }
 
@@ -9751,6 +9650,107 @@ impl<'a> AstNode<'a, JSDocNonNullableType<'a>> {
 }
 
 impl<'a> AstNode<'a, JSDocUnknownType> {
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_leading_comments(self.span()).fmt(f);
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
+            .fmt(f);
+    }
+}
+
+impl<'a> AstNode<'a, AstroRoot<'a>> {
+    #[inline]
+    pub fn frontmatter(&self) -> Option<&AstNode<'a, AstroFrontmatter<'a>>> {
+        let following_span_start = self
+            .inner
+            .body
+            .first()
+            .map(|n| n.span().start)
+            .or(Some(self.following_span_start))
+            .unwrap_or(0);
+        self.allocator
+            .alloc(self.inner.frontmatter.as_ref().map(|inner| AstNode {
+                inner: inner.as_ref(),
+                allocator: self.allocator,
+                parent: AstNodes::AstroRoot(transmute_self(self)),
+                following_span_start,
+            }))
+            .as_ref()
+    }
+
+    #[inline]
+    pub fn body(&self) -> &AstNode<'a, Vec<'a, JSXChild<'a>>> {
+        let following_span_start = self.following_span_start;
+        self.allocator.alloc(AstNode {
+            inner: &self.inner.body,
+            allocator: self.allocator,
+            parent: AstNodes::AstroRoot(transmute_self(self)),
+            following_span_start,
+        })
+    }
+
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_leading_comments(self.span()).fmt(f);
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
+            .fmt(f);
+    }
+}
+
+impl<'a> AstNode<'a, AstroFrontmatter<'a>> {
+    #[inline]
+    pub fn program(&self) -> &AstNode<'a, Program<'a>> {
+        let following_span_start = self.following_span_start;
+        self.allocator.alloc(AstNode {
+            inner: &self.inner.program,
+            allocator: self.allocator,
+            parent: AstNodes::AstroFrontmatter(transmute_self(self)),
+            following_span_start,
+        })
+    }
+
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_leading_comments(self.span()).fmt(f);
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
+            .fmt(f);
+    }
+}
+
+impl<'a> AstNode<'a, AstroScript<'a>> {
+    #[inline]
+    pub fn program(&self) -> &AstNode<'a, Program<'a>> {
+        let following_span_start = self.following_span_start;
+        self.allocator.alloc(AstNode {
+            inner: &self.inner.program,
+            allocator: self.allocator,
+            parent: AstNodes::AstroScript(transmute_self(self)),
+            following_span_start,
+        })
+    }
+
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_leading_comments(self.span()).fmt(f);
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
+            .fmt(f);
+    }
+}
+
+impl<'a> AstNode<'a, AstroDoctype<'a>> {
+    #[inline]
+    pub fn value(&self) -> Atom<'a> {
+        self.inner.value
+    }
+
     pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
         format_leading_comments(self.span()).fmt(f);
     }

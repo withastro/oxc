@@ -12,31 +12,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl ContentEq for AstroRoot<'_> {
-    fn content_eq(&self, other: &Self) -> bool {
-        ContentEq::content_eq(&self.frontmatter, &other.frontmatter)
-            && ContentEq::content_eq(&self.body, &other.body)
-    }
-}
-
-impl ContentEq for AstroFrontmatter<'_> {
-    fn content_eq(&self, other: &Self) -> bool {
-        ContentEq::content_eq(&self.program, &other.program)
-    }
-}
-
-impl ContentEq for AstroScript<'_> {
-    fn content_eq(&self, other: &Self) -> bool {
-        ContentEq::content_eq(&self.program, &other.program)
-    }
-}
-
-impl ContentEq for AstroDoctype<'_> {
-    fn content_eq(&self, other: &Self) -> bool {
-        ContentEq::content_eq(&self.value, &other.value)
-    }
-}
-
 impl ContentEq for Program<'_> {
     fn content_eq(&self, other: &Self) -> bool {
         ContentEq::content_eq(&self.source_type, &other.source_type)
@@ -2555,5 +2530,30 @@ impl ContentEq for Comment {
             && ContentEq::content_eq(&self.position, &other.position)
             && ContentEq::content_eq(&self.newlines, &other.newlines)
             && ContentEq::content_eq(&self.content, &other.content)
+    }
+}
+
+impl ContentEq for AstroRoot<'_> {
+    fn content_eq(&self, other: &Self) -> bool {
+        ContentEq::content_eq(&self.frontmatter, &other.frontmatter)
+            && ContentEq::content_eq(&self.body, &other.body)
+    }
+}
+
+impl ContentEq for AstroFrontmatter<'_> {
+    fn content_eq(&self, other: &Self) -> bool {
+        ContentEq::content_eq(&self.program, &other.program)
+    }
+}
+
+impl ContentEq for AstroScript<'_> {
+    fn content_eq(&self, other: &Self) -> bool {
+        ContentEq::content_eq(&self.program, &other.program)
+    }
+}
+
+impl ContentEq for AstroDoctype<'_> {
+    fn content_eq(&self, other: &Self) -> bool {
+        ContentEq::content_eq(&self.value, &other.value)
     }
 }

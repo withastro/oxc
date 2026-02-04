@@ -12,80 +12,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl<'new_alloc> CloneIn<'new_alloc> for AstroRoot<'_> {
-    type Cloned = AstroRoot<'new_alloc>;
-
-    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroRoot {
-            span: CloneIn::clone_in(&self.span, allocator),
-            frontmatter: CloneIn::clone_in(&self.frontmatter, allocator),
-            body: CloneIn::clone_in(&self.body, allocator),
-        }
-    }
-
-    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroRoot {
-            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
-            frontmatter: CloneIn::clone_in_with_semantic_ids(&self.frontmatter, allocator),
-            body: CloneIn::clone_in_with_semantic_ids(&self.body, allocator),
-        }
-    }
-}
-
-impl<'new_alloc> CloneIn<'new_alloc> for AstroFrontmatter<'_> {
-    type Cloned = AstroFrontmatter<'new_alloc>;
-
-    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroFrontmatter {
-            span: CloneIn::clone_in(&self.span, allocator),
-            program: CloneIn::clone_in(&self.program, allocator),
-        }
-    }
-
-    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroFrontmatter {
-            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
-            program: CloneIn::clone_in_with_semantic_ids(&self.program, allocator),
-        }
-    }
-}
-
-impl<'new_alloc> CloneIn<'new_alloc> for AstroScript<'_> {
-    type Cloned = AstroScript<'new_alloc>;
-
-    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroScript {
-            span: CloneIn::clone_in(&self.span, allocator),
-            program: CloneIn::clone_in(&self.program, allocator),
-        }
-    }
-
-    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroScript {
-            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
-            program: CloneIn::clone_in_with_semantic_ids(&self.program, allocator),
-        }
-    }
-}
-
-impl<'new_alloc> CloneIn<'new_alloc> for AstroDoctype<'_> {
-    type Cloned = AstroDoctype<'new_alloc>;
-
-    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroDoctype {
-            span: CloneIn::clone_in(&self.span, allocator),
-            value: CloneIn::clone_in(&self.value, allocator),
-        }
-    }
-
-    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
-        AstroDoctype {
-            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
-            value: CloneIn::clone_in_with_semantic_ids(&self.value, allocator),
-        }
-    }
-}
-
 impl<'new_alloc> CloneIn<'new_alloc> for Program<'_> {
     type Cloned = Program<'new_alloc>;
 
@@ -8098,6 +8024,80 @@ impl<'new_alloc> CloneIn<'new_alloc> for Comment {
             position: CloneIn::clone_in_with_semantic_ids(&self.position, allocator),
             newlines: CloneIn::clone_in_with_semantic_ids(&self.newlines, allocator),
             content: CloneIn::clone_in_with_semantic_ids(&self.content, allocator),
+        }
+    }
+}
+
+impl<'new_alloc> CloneIn<'new_alloc> for AstroRoot<'_> {
+    type Cloned = AstroRoot<'new_alloc>;
+
+    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroRoot {
+            span: CloneIn::clone_in(&self.span, allocator),
+            frontmatter: CloneIn::clone_in(&self.frontmatter, allocator),
+            body: CloneIn::clone_in(&self.body, allocator),
+        }
+    }
+
+    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroRoot {
+            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
+            frontmatter: CloneIn::clone_in_with_semantic_ids(&self.frontmatter, allocator),
+            body: CloneIn::clone_in_with_semantic_ids(&self.body, allocator),
+        }
+    }
+}
+
+impl<'new_alloc> CloneIn<'new_alloc> for AstroFrontmatter<'_> {
+    type Cloned = AstroFrontmatter<'new_alloc>;
+
+    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroFrontmatter {
+            span: CloneIn::clone_in(&self.span, allocator),
+            program: CloneIn::clone_in(&self.program, allocator),
+        }
+    }
+
+    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroFrontmatter {
+            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
+            program: CloneIn::clone_in_with_semantic_ids(&self.program, allocator),
+        }
+    }
+}
+
+impl<'new_alloc> CloneIn<'new_alloc> for AstroScript<'_> {
+    type Cloned = AstroScript<'new_alloc>;
+
+    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroScript {
+            span: CloneIn::clone_in(&self.span, allocator),
+            program: CloneIn::clone_in(&self.program, allocator),
+        }
+    }
+
+    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroScript {
+            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
+            program: CloneIn::clone_in_with_semantic_ids(&self.program, allocator),
+        }
+    }
+}
+
+impl<'new_alloc> CloneIn<'new_alloc> for AstroDoctype<'_> {
+    type Cloned = AstroDoctype<'new_alloc>;
+
+    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroDoctype {
+            span: CloneIn::clone_in(&self.span, allocator),
+            value: CloneIn::clone_in(&self.value, allocator),
+        }
+    }
+
+    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroDoctype {
+            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
+            value: CloneIn::clone_in_with_semantic_ids(&self.value, allocator),
         }
     }
 }

@@ -11,34 +11,6 @@ use crate::ast::jsx::*;
 use crate::ast::literal::*;
 use crate::ast::ts::*;
 
-impl GetSpan for AstroRoot<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
-impl GetSpan for AstroFrontmatter<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
-impl GetSpan for AstroScript<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
-impl GetSpan for AstroDoctype<'_> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
 impl GetSpan for Program<'_> {
     #[inline]
     fn span(&self) -> Span {
@@ -2205,6 +2177,34 @@ impl GetSpan for JSDocNonNullableType<'_> {
 }
 
 impl GetSpan for JSDocUnknownType {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroRoot<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroFrontmatter<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroScript<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroDoctype<'_> {
     #[inline]
     fn span(&self) -> Span {
         self.span

@@ -35,29 +35,6 @@ impl ChildScopeCollector {
 
 impl<'a> Visit<'a> for ChildScopeCollector {
     #[inline]
-    fn visit_astro_root(&mut self, it: &AstroRoot<'a>) {
-        if let Some(frontmatter) = &it.frontmatter {
-            self.visit_astro_frontmatter(frontmatter);
-        }
-        self.visit_jsx_children(&it.body);
-    }
-
-    #[inline]
-    fn visit_astro_frontmatter(&mut self, it: &AstroFrontmatter<'a>) {
-        self.visit_program(&it.program);
-    }
-
-    #[inline]
-    fn visit_astro_script(&mut self, it: &AstroScript<'a>) {
-        self.visit_program(&it.program);
-    }
-
-    #[inline(always)]
-    fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
-        // Struct does not contain a scope. Halt traversal.
-    }
-
-    #[inline]
     fn visit_program(&mut self, it: &Program<'a>) {
         self.add_scope(&it.scope_id);
     }
@@ -2041,6 +2018,29 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline(always)]
     fn visit_js_doc_unknown_type(&mut self, it: &JSDocUnknownType) {
+        // Struct does not contain a scope. Halt traversal.
+    }
+
+    #[inline]
+    fn visit_astro_root(&mut self, it: &AstroRoot<'a>) {
+        if let Some(frontmatter) = &it.frontmatter {
+            self.visit_astro_frontmatter(frontmatter);
+        }
+        self.visit_jsx_children(&it.body);
+    }
+
+    #[inline]
+    fn visit_astro_frontmatter(&mut self, it: &AstroFrontmatter<'a>) {
+        self.visit_program(&it.program);
+    }
+
+    #[inline]
+    fn visit_astro_script(&mut self, it: &AstroScript<'a>) {
+        self.visit_program(&it.program);
+    }
+
+    #[inline(always)]
+    fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
         // Struct does not contain a scope. Halt traversal.
     }
 
