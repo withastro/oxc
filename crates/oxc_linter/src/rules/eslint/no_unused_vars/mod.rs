@@ -222,7 +222,6 @@ impl Rule for NoUnusedVars {
         // 1. declarations have side effects (they get merged together)
         // 2. vue/svelte scripts declare variables that get used in the template, which
         //    we can't detect
-        // Note: Astro files ARE supported - semantic analysis tracks template usage
         !ctx.source_type().is_typescript_definition()
             && !ctx.file_extension().is_some_and(|ext| ext == "vue" || ext == "svelte")
     }

@@ -628,7 +628,7 @@ const name = "World";
 		</div>
 		<button id="load-more" class="button" type="button"> Load more </button>
 		<side-note>
-			Images and datas are fetched from <a href="https://igdb.com/"
+			Images and data are fetched from <a href="https://igdb.com/"
 				><abbr title="The Internet Game Database">IGDB</abbr></a
 			> for video games, <a href="https://boardgamegeek.com"
 				><abbr title="Board Game Geek">BGG</abbr></a

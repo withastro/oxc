@@ -1,6 +1,5 @@
 ---
 source: crates/oxc_linter/src/tester.rs
-assertion_line: 444
 ---
 
   × Unexpected token. Did you mean `{'>'}` or `&gt;`?
@@ -33,4 +32,22 @@ assertion_line: 444
  4 │               return <>{"Unbalanced braces - babel-eslint"}}</>;
    ·                                                            ▲
  5 │             }
+   ╰────
+
+  ⚠ eslint-plugin-react(no-unescaped-entities): `"` can be escaped with &quot; or &ldquo; or &#34; or &rdquo;
+   ╭─[no_unescaped_entities.tsx:1:22]
+ 1 │ <script>window.foo = "bar"</script>
+   ·                      ─
+   ╰────
+
+  ⚠ eslint-plugin-react(no-unescaped-entities): `"` can be escaped with &quot; or &ldquo; or &#34; or &rdquo;
+   ╭─[no_unescaped_entities.tsx:1:26]
+ 1 │ <script>window.foo = "bar"</script>
+   ·                          ─
+   ╰────
+
+  ⚠ eslint-plugin-react(no-unescaped-entities): `"` can be escaped with &quot; or &ldquo; or &#34; or &rdquo;
+   ╭─[no_unescaped_entities.tsx:1:16]
+ 1 │ <script>测试 " 测试</script>
+   ·              ─
    ╰────

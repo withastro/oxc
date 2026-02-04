@@ -182,13 +182,15 @@ pub use oxc_syntax::{
     },
 };
 
-pub(crate) mod astro;
 pub(crate) mod comment;
 pub(crate) mod js;
 pub(crate) mod jsx;
 pub(crate) mod literal;
 pub(crate) mod macros;
 pub(crate) mod ts;
+// Astro module is placed last so its AST types get higher discriminants,
+// avoiding changing the discriminants of existing JS/TS types.
+pub(crate) mod astro;
 
 pub use astro::*;
 pub use comment::*;

@@ -14,6 +14,36 @@ impl<'a> ParserImpl<'a> {
         if kind == Kind::RAngle {
             Expression::JSXFragment(self.parse_jsx_fragment(span, false))
         } else if kind.is_identifier_or_keyword() {
+            // In Astro, check for <script> which needs special handling
+            #[cfg(feature = "astro")]
+            if self.source_type.is_astro() && self.cur_src() == "script" {
+                // parse_astro_script_in_jsx returns JSXChild, convert to Expression
+                return match self.parse_astro_script_in_jsx(span) {
+                    JSXChild::Element(el) => Expression::JSXElement(el),
+                    JSXChild::AstroScript(script) => {
+                        // Wrap AstroScript in a synthetic JSX element for expression context
+                        // This maintains the expectation that JSX expressions return JSXElement
+                        let script_span = script.span;
+                        let name = self
+                            .ast
+                            .jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+                        let elem_name = JSXElementName::Identifier(self.alloc(name));
+                        let opening = self.ast.alloc_jsx_opening_element(
+                            script_span,
+                            elem_name,
+                            Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
+                            self.ast.vec(),
+                        );
+                        Expression::JSXElement(self.ast.alloc_jsx_element(
+                            script_span,
+                            opening,
+                            self.ast.vec1(JSXChild::AstroScript(script)),
+                            Option::<Box<'a, JSXClosingElement<'a>>>::None,
+                        ))
+                    }
+                    _ => unreachable!("parse_astro_script_in_jsx returns Element or AstroScript"),
+                };
+            }
             Expression::JSXElement(self.parse_jsx_element(span, false))
         } else {
             self.unexpected()
@@ -63,16 +93,25 @@ impl<'a> ParserImpl<'a> {
         span: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXElement<'a>> {
+        // In Astro, raw text elements (script/style) need special handling
+        #[cfg(feature = "astro")]
         let (opening_element, self_closing, is_raw_text_element) =
             self.parse_jsx_opening_element(span, in_jsx_child);
+        #[cfg(not(feature = "astro"))]
+        let (opening_element, self_closing) = self.parse_jsx_opening_element(span, in_jsx_child);
+
         let (children, closing_element) = if self_closing {
             (self.ast.vec(), None)
         } else {
+            #[cfg(feature = "astro")]
             let children = if is_raw_text_element {
-                self.skip_raw_text_element_content(&opening_element, in_jsx_child)
+                self.skip_astro_raw_text_element_content(&opening_element.name, in_jsx_child)
             } else {
                 self.parse_jsx_children()
             };
+            #[cfg(not(feature = "astro"))]
+            let children = self.parse_jsx_children();
+
             let closing_element = self.parse_jsx_closing_element(in_jsx_child);
             if !Self::jsx_element_name_eq(&opening_element.name, &closing_element.name) {
                 self.error(diagnostics::jsx_element_no_match(
@@ -86,129 +125,12 @@ impl<'a> ParserImpl<'a> {
         self.ast.alloc_jsx_element(self.end_span(span), opening_element, children, closing_element)
     }
 
-    /// Check if the element name is a raw text element (script, style, etc.)
-    /// These elements contain raw text content, not JSX children.
-    fn is_raw_text_element(name: &JSXElementName<'a>) -> bool {
-        match name {
-            JSXElementName::Identifier(ident) => {
-                matches!(ident.name.as_str(), "script" | "style")
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if the element name is an HTML void element.
-    /// Void elements cannot have content and don't require a closing tag.
-    /// <https://html.spec.whatwg.org/multipage/syntax.html#void-elements>
-    fn is_html_void_element(name: &JSXElementName<'a>) -> bool {
-        match name {
-            JSXElementName::Identifier(ident) => {
-                matches!(
-                    ident.name.as_str(),
-                    "area"
-                        | "base"
-                        | "br"
-                        | "col"
-                        | "embed"
-                        | "hr"
-                        | "img"
-                        | "input"
-                        | "link"
-                        | "meta"
-                        | "param"
-                        | "source"
-                        | "track"
-                        | "wbr"
-                )
-            }
-            _ => false,
-        }
-    }
-
-    /// Handle the content of a raw text element (script or style).
-    ///
-    /// For Astro files, bare `<script>` tags (no attributes) have their content
-    /// parsed as TypeScript and returned as an `AstroScript` child.
-    /// All other cases return an empty children vector (content is skipped).
-    ///
-    /// Note: This is called AFTER the opening element's `>` has been consumed,
-    /// but BEFORE the lexer has advanced to parse JSX children.
-    /// The `prev_token_end` points to right after the `>`.
-    #[expect(clippy::cast_possible_truncation)]
-    fn skip_raw_text_element_content(
-        &mut self,
-        opening_element: &JSXOpeningElement<'a>,
-        in_jsx_child: bool,
-    ) -> Vec<'a, JSXChild<'a>> {
-        let tag_name = match &opening_element.name {
-            JSXElementName::Identifier(ident) => ident.name.as_str(),
-            _ => return self.ast.vec(),
-        };
-
-        // Build the closing tag pattern: </script> or </style>
-        let closing_tag = format!("</{tag_name}");
-
-        // Start searching from after the `>` we just consumed
-        let content_start = self.prev_token_end as usize;
-        let Some(rest) = self.source_text.get(content_start..) else {
-            return self.ast.vec();
-        };
-        let Some(end_offset) = rest.find(&closing_tag) else {
-            return self.ast.vec();
-        };
-
-        let content_end = content_start + end_offset;
-
-        // In Astro mode, bare <script> tags (no attributes) should be parsed as TypeScript
-        // and returned as AstroScript for semantic analysis.
-        let is_bare_astro_script = self.source_type.is_astro()
-            && tag_name == "script"
-            && opening_element.attributes.is_empty();
-
-        let children = if is_bare_astro_script {
-            // Create an AstroScript child with the script content
-            // Note: The span covers the entire <script>...</script>, but the Program
-            // inside represents just the content between the tags.
-            let script_content_span = oxc_span::Span::new(content_start as u32, content_end as u32);
-
-            let program = self.ast.program(
-                script_content_span,
-                self.source_type,
-                "",
-                self.ast.vec(),
-                None,
-                self.ast.vec(),
-                self.ast.vec(),
-            );
-
-            // The full span includes the opening tag through end of content
-            // (closing tag will be handled by parse_jsx_closing_element)
-            let script_span = oxc_span::Span::new(opening_element.span.start, content_end as u32);
-            let astro_script = self.ast.alloc_astro_script(script_span, program);
-
-            self.ast.vec1(JSXChild::AstroScript(astro_script))
-        } else {
-            self.ast.vec()
-        };
-
-        // Move the lexer position to the closing tag
-        let new_pos = content_end as u32;
-        self.lexer.set_position_for_astro(new_pos);
-        // Read the `<` token to prepare for parsing the closing element
-        // Use next_jsx_child if in_jsx_child to maintain consistent lexer state
-        if in_jsx_child {
-            self.token = self.lexer.next_jsx_child();
-        } else {
-            self.token = self.lexer.next_token();
-        }
-
-        children
-    }
-
     /// `JSXOpeningElement` :
     /// < `JSXElementName` `JSXAttributes_opt` >
     ///
-    /// Returns (opening_element, self_closing, is_raw_text_element)
+    /// Returns (opening_element, self_closing) for regular JSX.
+    /// Returns (opening_element, self_closing, is_raw_text_element) for Astro.
+    #[cfg(feature = "astro")]
     fn parse_jsx_opening_element(
         &mut self,
         span: u32,
@@ -216,7 +138,7 @@ impl<'a> ParserImpl<'a> {
     ) -> (
         Box<'a, JSXOpeningElement<'a>>,
         bool, // `true` if self-closing
-        bool, // `true` if raw text element (script/style)
+        bool, // `true` if raw text element (script/style) - Astro only
     ) {
         let name = self.parse_jsx_element_name();
         // <Component<TsType> for tsx
@@ -226,15 +148,15 @@ impl<'a> ParserImpl<'a> {
 
         // In Astro, HTML void elements are implicitly self-closing even without `/`
         let self_closing = explicit_self_closing
-            || (self.source_type.is_astro() && Self::is_html_void_element(&name));
+            || (self.source_type.is_astro() && Self::is_astro_void_element(&name));
 
-        // Check if this is a raw text element BEFORE advancing the lexer
-        let is_raw_text = Self::is_raw_text_element(&name);
+        // Check if this is a raw text element (script/style) in Astro
+        let is_raw_text = self.source_type.is_astro() && Self::is_astro_raw_text_element(&name);
 
         // For raw text elements, we must NOT call next_token() or next_jsx_child()
         // because the content should not be parsed as JSX/JS. We just check for `>`
         // without advancing, then record prev_token_end manually.
-        // The caller (skip_raw_text_element_content) will reposition the lexer.
+        // The caller (skip_astro_raw_text_element_content) will reposition the lexer.
         if is_raw_text && !explicit_self_closing {
             self.expect_without_advance(Kind::RAngle);
             // Manually update prev_token_end to point after the `>`
@@ -251,6 +173,37 @@ impl<'a> ParserImpl<'a> {
             attributes,
         );
         (elem, self_closing, is_raw_text)
+    }
+
+    /// `JSXOpeningElement` :
+    /// < `JSXElementName` `JSXAttributes_opt` >
+    #[cfg(not(feature = "astro"))]
+    fn parse_jsx_opening_element(
+        &mut self,
+        span: u32,
+        in_jsx_child: bool,
+    ) -> (
+        Box<'a, JSXOpeningElement<'a>>,
+        bool, // `true` if self-closing
+    ) {
+        let name = self.parse_jsx_element_name();
+        // <Component<TsType> for tsx
+        let type_arguments = if self.is_ts { self.try_parse_type_arguments() } else { None };
+        let attributes = self.parse_jsx_attributes();
+        let self_closing = self.eat(Kind::Slash);
+
+        if !self_closing || in_jsx_child {
+            self.expect_jsx_child(Kind::RAngle);
+        } else {
+            self.expect(Kind::RAngle);
+        }
+        let elem = self.ast.alloc_jsx_opening_element(
+            self.end_span(span),
+            name,
+            type_arguments,
+            attributes,
+        );
+        (elem, self_closing)
     }
 
     fn parse_jsx_closing_element(&mut self, in_jsx_child: bool) -> Box<'a, JSXClosingElement<'a>> {
@@ -275,12 +228,7 @@ impl<'a> ParserImpl<'a> {
         let identifier = self.parse_jsx_identifier();
 
         // <namespace:property />
-        // In Astro, `:` followed by whitespace is NOT a namespace separator.
-        // `<div:foo>` is a namespaced name, but `<div :foo>` has `:foo` as an attribute.
-        // We detect this by checking if there's whitespace between the identifier and `:`.
-        let colon_directly_follows =
-            self.at(Kind::Colon) && self.prev_token_end == self.cur_token().span().start;
-        if colon_directly_follows && self.eat(Kind::Colon) {
+        if self.eat(Kind::Colon) {
             let property = self.parse_jsx_identifier();
             return self.ast.jsx_element_name_namespaced_name(
                 self.end_span(span),
@@ -404,17 +352,17 @@ impl<'a> ParserImpl<'a> {
                 }
                 // <ident open element
                 if kind == Kind::Ident || kind.is_any_keyword() {
+                    // In Astro, check for <script> which needs special handling
+                    #[cfg(feature = "astro")]
+                    if self.source_type.is_astro() && self.cur_src() == "script" {
+                        return Some(self.parse_astro_script_in_jsx(span));
+                    }
                     return Some(JSXChild::Element(self.parse_jsx_element(span, true)));
                 }
                 // </ close fragment
                 if kind == Kind::Slash {
                     self.rewind(checkpoint);
                     return None;
-                }
-                // <! HTML comment - skip and continue parsing
-                if kind == Kind::Bang {
-                    self.skip_jsx_html_comment();
-                    return self.parse_jsx_child();
                 }
                 self.unexpected()
             }
@@ -462,25 +410,13 @@ impl<'a> ParserImpl<'a> {
             let expr = self.ast.jsx_empty_expression(Span::new(span.start + 1, span.end - 1));
             JSXExpression::EmptyExpression(expr)
         } else {
-            // In Astro mode with JSX children starting with `<`, parse as JSX children directly.
-            // This allows: { <div>1</div> <div>2</div> } without explicit fragments.
-            // We must detect this BEFORE calling parse_expr() because parse_expr() would
-            // misinterpret the `<` after the first element as a binary comparison operator.
-            #[cfg(feature = "astro")]
-            if self.source_type.is_astro() && in_jsx_child && self.at(Kind::LAngle) {
-                let expr = self.parse_astro_jsx_children_in_expression(span_start);
-                return self.ast.alloc_jsx_expression_container(self.end_span(span_start), expr);
-            }
-
-            // Parse the expression normally
-            let first_expr = self.parse_expr();
-
+            let expr = JSXExpression::from(self.parse_expr());
             if in_jsx_child {
                 self.expect_jsx_child(Kind::RCurly);
             } else {
                 self.expect(Kind::RCurly);
             }
-            JSXExpression::from(first_expr)
+            expr
         };
 
         self.ast.alloc_jsx_expression_container(self.end_span(span_start), expr)
@@ -502,6 +438,7 @@ impl<'a> ParserImpl<'a> {
     ///   `JSXAttribute` `JSXAttributes_opt`
     fn parse_jsx_attributes(&mut self) -> Vec<'a, JSXAttributeItem<'a>> {
         let mut attributes = self.ast.vec();
+        #[cfg(feature = "astro")]
         let is_astro = self.source_type.is_astro();
         loop {
             let kind = self.cur_kind();
@@ -513,46 +450,12 @@ impl<'a> ParserImpl<'a> {
             let attribute = match kind {
                 Kind::LCurly => {
                     // In Astro, `{prop}` can be shorthand for `prop={prop}`
-                    if is_astro {
-                        let checkpoint = self.checkpoint();
-                        self.bump_any(); // bump `{`
-
-                        // Check if this is a shorthand: `{identifier}`
-                        if self.at(Kind::Ident) || self.cur_kind().is_any_keyword() {
-                            let ident_span = self.start_span();
-                            let name = self.cur_src();
-                            self.bump_any();
-
-                            if self.at(Kind::RCurly) {
-                                // This is shorthand: `{prop}` -> `prop={prop}`
-                                self.bump_any(); // bump `}`
-                                let ident_span = self.end_span(ident_span);
-                                let name = Atom::from(name);
-                                let identifier = self.ast.jsx_identifier(ident_span, name);
-                                let attr_name =
-                                    JSXAttributeName::Identifier(self.alloc(identifier));
-
-                                // Create expression for value: the identifier reference
-                                let ident_ref = self.ast.identifier_reference(ident_span, name);
-                                let expr = Expression::Identifier(self.alloc(ident_ref));
-                                let expr_container = self.ast.alloc_jsx_expression_container(
-                                    ident_span,
-                                    JSXExpression::from(expr),
-                                );
-                                let value = JSXAttributeValue::ExpressionContainer(expr_container);
-
-                                let attr = self.ast.alloc_jsx_attribute(
-                                    ident_span,
-                                    attr_name,
-                                    Some(value),
-                                );
-                                attributes.push(JSXAttributeItem::Attribute(attr));
-                                continue;
-                            }
-                        }
-
-                        // Not shorthand, rewind and parse as spread
-                        self.rewind(checkpoint);
+                    #[cfg(feature = "astro")]
+                    if is_astro
+                        && let Some(attr) = self.try_parse_astro_shorthand_attribute()
+                    {
+                        attributes.push(JSXAttributeItem::Attribute(attr));
+                        continue;
                     }
                     JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
                 }
@@ -636,17 +539,6 @@ impl<'a> ParserImpl<'a> {
                 Expression::JSXElement(element) => JSXAttributeValue::Element(element),
                 _ => self.unexpected(),
             },
-            // In Astro, template literals can be used directly as attribute values
-            // e.g., <Component attr=`hello ${value}` />
-            Kind::NoSubstitutionTemplate | Kind::TemplateHead if self.source_type.is_astro() => {
-                let span = self.start_span();
-                let template_lit = self.parse_template_literal(false);
-                let expr = Expression::TemplateLiteral(self.alloc(template_lit));
-                let expr_container = self
-                    .ast
-                    .alloc_jsx_expression_container(self.end_span(span), JSXExpression::from(expr));
-                JSXAttributeValue::ExpressionContainer(expr_container)
-            }
             _ => self.unexpected(),
         }
     }
@@ -718,55 +610,6 @@ impl<'a> ParserImpl<'a> {
                 JSXMemberExpressionObject::ThisExpression(_),
             ) => true,
             _ => false,
-        }
-    }
-
-    /// Skip an HTML comment `<!-- ... -->` inside JSX.
-    ///
-    /// HTML comments are valid in Astro files and some JSX contexts.
-    /// We skip them entirely rather than producing an AST node.
-    pub(crate) fn skip_jsx_html_comment(&mut self) {
-        // We're at `!` after `<`
-        self.bump_any(); // skip `!`
-
-        // Look for `--` to start comment
-        if self.at(Kind::Minus2) {
-            self.bump_any(); // skip `--`
-        } else if self.at(Kind::Minus) {
-            self.bump_any(); // skip first `-`
-            if self.at(Kind::Minus) {
-                self.bump_any(); // skip second `-`
-            }
-        }
-
-        // Skip until we find `-->`
-        // The lexer is in JSX mode, so we need to scan the source directly
-        let start_pos = self.cur_token().span().start as usize;
-        if let Some(rest) = self.source_text.get(start_pos..)
-            && let Some(end_pos) = rest.find("-->")
-        {
-            // Move past the `-->` by setting the lexer position
-            #[expect(clippy::cast_possible_truncation)]
-            let new_pos = (start_pos + end_pos + 3) as u32;
-            self.lexer.set_position_for_astro(new_pos);
-            self.token = self.lexer.next_jsx_child();
-            return;
-        }
-
-        // If no closing `-->` found, skip tokens until EOF (error recovery)
-        while !self.at(Kind::Eof) {
-            if self.at(Kind::Minus2) || self.at(Kind::Minus) {
-                self.bump_any();
-                if self.at(Kind::Minus) {
-                    self.bump_any();
-                }
-                if self.at(Kind::RAngle) {
-                    self.bump_any();
-                    break;
-                }
-            } else {
-                self.bump_any();
-            }
         }
     }
 }

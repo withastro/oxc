@@ -34,7 +34,7 @@ const _: () = {
     assert!(offset_of!(AstroDoctype, span) == 0);
     assert!(offset_of!(AstroDoctype, value) == 8);
 
-    // Padding: 1 bytes
+    // Padding: 0 bytes
     assert!(size_of::<Program>() == 128);
     assert!(align_of::<Program>() == 8);
     assert!(offset_of!(Program, span) == 0);
@@ -1681,7 +1681,7 @@ const _: () = if cfg!(target_family = "wasm") || align_of::<u64>() == 8 {
     assert!(offset_of!(AstroDoctype, span) == 0);
     assert!(offset_of!(AstroDoctype, value) == 8);
 
-    // Padding: 1 bytes
+    // Padding: 0 bytes
     assert!(size_of::<Program>() == 88);
     assert!(align_of::<Program>() == 4);
     assert!(offset_of!(Program, span) == 0);

@@ -137,9 +137,6 @@ fn test() {
           },
         });
         ",
-        // Script tags should not trigger unescaped entity errors - their content is JS, not HTML
-        r#"<script>window.foo = "bar"</script>"#,
-        r#"<script>测试 " 测试</script>"#,
     ];
 
     let fail = vec![
@@ -171,10 +168,17 @@ fn test() {
         "#,
         // "var Hello = createReactClass({
         //     render: function() {
+        //       return <>foo & bar</>;
+        //     }
+        //   });",
+        // "        var Hello = createReactClass({
+        //     render: function() {
         //       return <span>foo & bar</span>;
         //     }
         //   });
         // ",
+        r#"<script>window.foo = "bar"</script>"#,
+        r#"<script>测试 " 测试</script>"#,
     ];
 
     Tester::new(NoUnescapedEntities::NAME, NoUnescapedEntities::PLUGIN, pass, fail)
