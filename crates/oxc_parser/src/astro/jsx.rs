@@ -16,7 +16,6 @@ impl<'a> ParserImpl<'a> {
     ///
     /// We parse JSX children similarly to parse_jsx_children, but we stop at `}`
     /// instead of `</`. After each child, we re-lex as JSX child to get the next token.
-    #[expect(dead_code)] // May be needed for future Astro expression container handling
     pub(crate) fn parse_astro_jsx_children_in_expression(
         &mut self,
         span_start: u32,
@@ -49,9 +48,14 @@ impl<'a> ParserImpl<'a> {
                             self.token = self.lexer.next_token();
                         }
                     } else if kind == Kind::Ident || kind.is_any_keyword() {
-                        // `<ident` - element
-                        let element = self.parse_jsx_element(child_span, true);
-                        children.push(JSXChild::Element(element));
+                        // Check for <script> which needs special handling
+                        if self.cur_src() == "script" {
+                            children.push(self.parse_astro_script_in_jsx(child_span));
+                        } else {
+                            // `<ident` - element
+                            let element = self.parse_jsx_element(child_span, true);
+                            children.push(JSXChild::Element(element));
+                        }
                         // parse_jsx_element with in_jsx_child=true calls expect_jsx_child(RAngle)
                         // which calls next_jsx_child(). But next_jsx_child() returns Eof with error
                         // when text is followed by `}` (since `}` is unexpected in normal JSX).
@@ -436,7 +440,7 @@ impl<'a> ParserImpl<'a> {
                 ));
             }
 
-            // Bare script - create empty AstroScript
+            // Bare self-closing script - wrap empty AstroScript in JSX element
             let program = self.ast.program(
                 oxc_span::Span::empty(end),
                 self.source_type,
@@ -446,7 +450,24 @@ impl<'a> ParserImpl<'a> {
                 self.ast.vec(),
                 self.ast.vec(),
             );
-            return JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
+            let astro_script =
+                JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
+
+            // Wrap in a <script> element
+            let name = self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+            let elem_name = JSXElementName::Identifier(self.alloc(name));
+            let opening = self.ast.alloc_jsx_opening_element(
+                script_span,
+                elem_name,
+                Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
+                self.ast.vec(),
+            );
+            return JSXChild::Element(self.ast.alloc_jsx_element(
+                script_span,
+                opening,
+                self.ast.vec1(astro_script),
+                Option::<Box<'a, JSXClosingElement<'a>>>::None,
+            ));
         }
 
         // Find the closing </script> tag
@@ -516,7 +537,7 @@ impl<'a> ParserImpl<'a> {
                 ));
             }
 
-            // Bare script - create AstroScript with span for later parsing
+            // Bare script - wrap AstroScript in <script> element
             let script_content_span = oxc_span::Span::new(content_start as u32, content_end as u32);
 
             let program = self.ast.program(
@@ -528,11 +549,39 @@ impl<'a> ParserImpl<'a> {
                 self.ast.vec(),
                 self.ast.vec(),
             );
+            let astro_script =
+                JSXChild::AstroScript(self.ast.alloc_astro_script(full_span, program));
 
-            return JSXChild::AstroScript(self.ast.alloc_astro_script(full_span, program));
+            // Create <script> opening element
+            let opening_name =
+                self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+            let opening_elem_name = JSXElementName::Identifier(self.alloc(opening_name));
+            let opening = self.ast.alloc_jsx_opening_element(
+                oxc_span::Span::new(span, content_start as u32),
+                opening_elem_name,
+                Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
+                self.ast.vec(),
+            );
+
+            // Create </script> closing element
+            let closing_name = self
+                .ast
+                .jsx_identifier(oxc_span::Span::new(content_end as u32 + 2, end - 1), "script");
+            let closing_elem_name = JSXElementName::Identifier(self.alloc(closing_name));
+            let closing = self.ast.alloc_jsx_closing_element(
+                oxc_span::Span::new(content_end as u32, end),
+                closing_elem_name,
+            );
+
+            return JSXChild::Element(self.ast.alloc_jsx_element(
+                full_span,
+                opening,
+                self.ast.vec1(astro_script),
+                Some(closing),
+            ));
         }
 
-        // No closing tag found - error recovery
+        // No closing tag found - error recovery, wrap in element
         let end = self.prev_token_end;
         let script_span = oxc_span::Span::new(span, end);
         let program = self.ast.program(
@@ -544,7 +593,23 @@ impl<'a> ParserImpl<'a> {
             self.ast.vec(),
             self.ast.vec(),
         );
-        JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program))
+        let astro_script = JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
+
+        // Wrap in a <script> element for consistency
+        let name = self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+        let elem_name = JSXElementName::Identifier(self.alloc(name));
+        let opening = self.ast.alloc_jsx_opening_element(
+            script_span,
+            elem_name,
+            Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
+            self.ast.vec(),
+        );
+        JSXChild::Element(self.ast.alloc_jsx_element(
+            script_span,
+            opening,
+            self.ast.vec1(astro_script),
+            Option::<Box<'a, JSXClosingElement<'a>>>::None,
+        ))
     }
 
     /// Skip the raw text content of a script or style element in Astro.

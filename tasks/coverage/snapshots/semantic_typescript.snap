@@ -31707,13 +31707,18 @@ after transform: ScopeId(0): ["JSX", "_jsxFileName", "_reactJsxRuntime"]
 rebuilt        : ScopeId(0): ["_jsxFileName", "_reactJsxRuntime"]
 
 semantic Error: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName1.tsx
-Unexpected token
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
 
 semantic Error: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedAttributeName2.tsx
-Unexpected token
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
 
 semantic Error: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxNamespacedTagName1.tsx
-Unexpected token
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
+Namespace tags are not supported by default. React's JSX doesn't support namespace tags. You can set `throwIfNamespace: false` to bypass this warning.
 
 semantic Error: tasks/coverage/typescript/tests/cases/conformance/jsx/tsxOpeningClosingNames.tsx
 Bindings mismatch:

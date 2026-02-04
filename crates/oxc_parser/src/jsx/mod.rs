@@ -391,6 +391,16 @@ impl<'a> ParserImpl<'a> {
         span_start: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXExpressionContainer<'a>> {
+        // In Astro mode with JSX children starting with `<`, parse as potential JSX children directly.
+        // This allows: { <div>1</div> <div>2</div> } without explicit fragments.
+        // We must detect this BEFORE calling parse_expr() because parse_expr() would
+        // misinterpret the `<` after the first element as a binary comparison operator.
+        #[cfg(feature = "astro")]
+        if self.source_type.is_astro() && in_jsx_child && self.at(Kind::LAngle) {
+            let expr = self.parse_astro_jsx_children_in_expression(span_start);
+            return self.ast.alloc_jsx_expression_container(self.end_span(span_start), expr);
+        }
+
         let expr = if self.at(Kind::RCurly) {
             if in_jsx_child {
                 self.expect_jsx_child(Kind::RCurly);

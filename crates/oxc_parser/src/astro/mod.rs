@@ -274,7 +274,7 @@ impl<'a> ParserImpl<'a> {
                 ));
             }
 
-            // Bare script - create empty AstroScript
+            // Bare self-closing script - wrap empty AstroScript in JSX element
             let program = self.ast.program(
                 oxc_span::Span::empty(end),
                 self.source_type,
@@ -284,7 +284,26 @@ impl<'a> ParserImpl<'a> {
                 self.ast.vec(),
                 self.ast.vec(),
             );
-            return JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
+            let astro_script =
+                JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
+
+            // Wrap in a <script> element for consistency
+            let name = self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+            let elem_name = JSXElementName::Identifier(self.alloc(name));
+            let no_type_args: NoTypeArgs<'a> = None;
+            let opening = self.ast.alloc_jsx_opening_element(
+                script_span,
+                elem_name,
+                no_type_args,
+                self.ast.vec(),
+            );
+            let no_closing: NoClosingElement<'a> = None;
+            return JSXChild::Element(self.ast.alloc_jsx_element(
+                script_span,
+                opening,
+                self.ast.vec1(astro_script),
+                no_closing,
+            ));
         }
 
         // Find the closing </script> tag
@@ -359,7 +378,7 @@ impl<'a> ParserImpl<'a> {
                 ));
             }
 
-            // Bare script - create AstroScript for later parsing
+            // Bare script - wrap AstroScript in <script> element
             let script_content_span = oxc_span::Span::new(content_start as u32, content_end as u32);
 
             let program = self.ast.program(
@@ -371,8 +390,37 @@ impl<'a> ParserImpl<'a> {
                 self.ast.vec(),
                 self.ast.vec(),
             );
+            let astro_script =
+                JSXChild::AstroScript(self.ast.alloc_astro_script(full_span, program));
 
-            return JSXChild::AstroScript(self.ast.alloc_astro_script(full_span, program));
+            // Create <script> opening element
+            let opening_name =
+                self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
+            let opening_elem_name = JSXElementName::Identifier(self.alloc(opening_name));
+            let no_type_args: NoTypeArgs<'a> = None;
+            let opening = self.ast.alloc_jsx_opening_element(
+                oxc_span::Span::new(span, content_start as u32),
+                opening_elem_name,
+                no_type_args,
+                self.ast.vec(),
+            );
+
+            // Create </script> closing element
+            let closing_name = self
+                .ast
+                .jsx_identifier(oxc_span::Span::new(content_end as u32 + 2, end - 1), "script");
+            let closing_elem_name = JSXElementName::Identifier(self.alloc(closing_name));
+            let closing = self.ast.alloc_jsx_closing_element(
+                oxc_span::Span::new(content_end as u32, end),
+                closing_elem_name,
+            );
+
+            return JSXChild::Element(self.ast.alloc_jsx_element(
+                full_span,
+                opening,
+                self.ast.vec1(astro_script),
+                Some(closing),
+            ));
         }
 
         // Fallback: couldn't find closing tag, parse as regular element
@@ -510,21 +558,33 @@ const name = "World";
         // Second should be text (newline)
         assert!(matches!(ret.root.body[1], JSXChild::Text(_)));
 
-        // Third should be an AstroScript with parsed TypeScript
+        // Third should be a <script> Element containing an AstroScript with parsed TypeScript
         match &ret.root.body[2] {
-            JSXChild::AstroScript(script) => {
-                // Should have 3 statements: 2 const declarations + 1 expression statement
-                assert_eq!(
-                    script.program.body.len(),
-                    3,
-                    "Expected 3 statements in script, got {}",
-                    script.program.body.len()
-                );
-                assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
-                assert!(matches!(script.program.body[1], Statement::VariableDeclaration(_)));
-                assert!(matches!(script.program.body[2], Statement::ExpressionStatement(_)));
+            JSXChild::Element(el) => {
+                // Check it's a <script> element
+                if let JSXElementName::Identifier(ident) = &el.opening_element.name {
+                    assert_eq!(ident.name.as_str(), "script");
+                } else {
+                    panic!("Expected script identifier");
+                }
+                // Should have one child: AstroScript
+                assert_eq!(el.children.len(), 1, "Script element should have 1 child");
+                if let JSXChild::AstroScript(script) = &el.children[0] {
+                    // Should have 3 statements: 2 const declarations + 1 expression statement
+                    assert_eq!(
+                        script.program.body.len(),
+                        3,
+                        "Expected 3 statements in script, got {}",
+                        script.program.body.len()
+                    );
+                    assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
+                    assert!(matches!(script.program.body[1], Statement::VariableDeclaration(_)));
+                    assert!(matches!(script.program.body[2], Statement::ExpressionStatement(_)));
+                } else {
+                    panic!("Expected AstroScript child, got {:?}", el.children[0]);
+                }
             }
-            other => panic!("Expected AstroScript, got {other:?}"),
+            other => panic!("Expected Element, got {other:?}"),
         }
 
         // Fourth should be an element
@@ -1242,16 +1302,28 @@ const user: User = { id: 1, name: "test" };
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Body should have one AstroScript
+        // Body should have one <script> Element containing AstroScript
         assert_eq!(ret.root.body.len(), 1);
         match &ret.root.body[0] {
-            JSXChild::AstroScript(script) => {
-                // Should have parsed TypeScript (interface + const)
-                assert_eq!(script.program.body.len(), 2);
-                assert!(matches!(script.program.body[0], Statement::TSInterfaceDeclaration(_)));
-                assert!(matches!(script.program.body[1], Statement::VariableDeclaration(_)));
+            JSXChild::Element(el) => {
+                // Check it's a <script> element
+                if let JSXElementName::Identifier(ident) = &el.opening_element.name {
+                    assert_eq!(ident.name.as_str(), "script");
+                } else {
+                    panic!("Expected script identifier");
+                }
+                // Should have one child: AstroScript
+                assert_eq!(el.children.len(), 1, "Script element should have 1 child");
+                if let JSXChild::AstroScript(script) = &el.children[0] {
+                    // Should have parsed TypeScript (interface + const)
+                    assert_eq!(script.program.body.len(), 2);
+                    assert!(matches!(script.program.body[0], Statement::TSInterfaceDeclaration(_)));
+                    assert!(matches!(script.program.body[1], Statement::VariableDeclaration(_)));
+                } else {
+                    panic!("Expected AstroScript child, got {:?}", el.children[0]);
+                }
             }
-            other => panic!("Expected AstroScript, got {other:?}"),
+            other => panic!("Expected Element, got {other:?}"),
         }
     }
 
@@ -2044,6 +2116,798 @@ return;
                     }
                 }
                 assert!(found_script, "Expected to find a parsed script in block body arrow");
+            }
+        }
+    }
+
+    // ==========================================
+    // Multiple JSX Roots Tests (Astro-specific)
+    // ==========================================
+    // These tests cover the key Astro feature: multiple JSX elements
+    // without requiring explicit fragment wrappers.
+
+    #[test]
+    fn parse_astro_multiple_roots_simple() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Simplest case: two sibling elements at top level
+        let source = "<div>1</div><div>2</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+        assert!(matches!(ret.root.body[1], JSXChild::Element(_)));
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_text_between() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Elements with text/whitespace between them
+        let source = "<div>a</div> text <span>b</span>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        // div, text, span
+        assert_eq!(ret.root.body.len(), 3);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+        assert!(matches!(ret.root.body[1], JSXChild::Text(_)));
+        assert!(matches!(ret.root.body[2], JSXChild::Element(_)));
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_many_elements() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Many sibling elements
+        let source = "<a>1</a><b>2</b><c>3</c><d>4</d><e>5</e>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 5);
+        for child in &ret.root.body {
+            assert!(matches!(child, JSXChild::Element(_)));
+        }
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_in_expression_simple() {
+        use oxc_ast::ast::JSXExpression;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Two elements in expression container (no explicit fragment)
+        let source = "{<div>a</div><span>b</span>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            if let JSXExpression::JSXFragment(fragment) = &container.expression {
+                let element_count =
+                    fragment.children.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+                assert_eq!(element_count, 2, "Expected 2 elements in implicit fragment");
+            } else {
+                panic!("Expected JSXFragment for multiple elements");
+            }
+        } else {
+            panic!("Expected ExpressionContainer");
+        }
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_in_expression_with_whitespace() {
+        use oxc_ast::ast::JSXExpression;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple elements with whitespace in expression
+        let source = "{\n  <div>a</div>\n  <span>b</span>\n  <p>c</p>\n}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            if let JSXExpression::JSXFragment(fragment) = &container.expression {
+                let element_count =
+                    fragment.children.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+                assert_eq!(element_count, 3, "Expected 3 elements");
+            } else {
+                panic!("Expected JSXFragment");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_astro_single_element_in_expression_no_fragment() {
+        use oxc_ast::ast::JSXExpression;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Single element should NOT be wrapped in fragment
+        let source = "{<div>only one</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            // Single element should be JSXElement, not JSXFragment
+            assert!(
+                matches!(container.expression, JSXExpression::JSXElement(_)),
+                "Single element should be JSXElement, not fragment: {:?}",
+                container.expression
+            );
+        }
+    }
+
+    #[test]
+    fn parse_astro_map_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Common Astro pattern: map returning multiple elements
+        let source = "{items.map(item => <dt>{item.term}</dt><dd>{item.def}</dd>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 1);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_map_with_index_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Map with index parameter
+        let source = "{items.map((item, i) => <span key={i}>{item}</span><br />)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_filter_map_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Chained array methods
+        let source = "{items.filter(x => x.visible).map(x => <div>{x.name}</div><hr />)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_ternary_both_branches_multiple() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Ternary with multiple elements in both branches
+        let source = "{cond ? <a>1</a><b>2</b> : <c>3</c><d>4</d>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_ternary_consequent_multiple_only() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Ternary with multiple elements only in consequent
+        let source = "{cond ? <a>1</a><b>2</b> : <c>single</c>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_ternary_alternate_multiple_only() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Ternary with multiple elements only in alternate
+        let source = "{cond ? <single /> : <a>1</a><b>2</b>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_logical_and_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Logical AND with multiple elements
+        let source = "{show && <div>a</div><div>b</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_logical_or_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Logical OR with multiple elements as fallback
+        let source = "{content || <div>fallback1</div><div>fallback2</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_nullish_coalescing_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Nullish coalescing with multiple elements
+        let source = "{value ?? <span>default1</span><span>default2</span>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_nested_expression_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Nested expressions with multiple roots at different levels
+        let source = "<div>{show && <a>1</a><b>2</b>}</div><div>{other && <c>3</c><d>4</d>}</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        // Two root divs
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    #[test]
+    fn parse_astro_deeply_nested_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots inside nested structure
+        let source = "<ul>{items.map(item => <li>{item.name}</li><li>{item.value}</li>)}</ul>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 1);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_void_elements() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots including void elements
+        let source = "<input><br><hr><img src=\"test.png\">";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 4);
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_mixed_void_and_normal() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Mix of void and normal elements
+        let source = "<div>content</div><br><span>more</span><hr>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 4);
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_self_closing() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple self-closing elements
+        let source = "<Component /><Another /><Third prop={value} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 3);
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_fragments_mixed() {
+        use oxc_ast::ast::JSXExpression;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Explicit fragments mixed with implicit multiple roots
+        let source = "{<>frag1</><div>elem</div><>frag2</>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
+            if let JSXExpression::JSXFragment(fragment) = &container.expression {
+                // Should have 3 children: fragment, element, fragment
+                let child_count =
+                    fragment.children.iter().filter(|c| !matches!(c, JSXChild::Text(_))).count();
+                assert_eq!(child_count, 3, "Expected 3 non-text children");
+            } else {
+                panic!("Expected implicit JSXFragment wrapper");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_expression_children() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots with expression children
+        let source = "<div>{a}</div><span>{b}</span><p>{c}</p>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 3);
+    }
+
+    #[test]
+    fn parse_astro_array_literal_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Array literal containing multiple JSX roots per element
+        let source = "{[<a>1</a><b>2</b>, <c>3</c><d>4</d>]}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_function_call_with_multiple_jsx_args() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Function call with JSX arguments (each could have multiple roots)
+        let source = "{render(<div>a</div><span>b</span>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_object_property_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Object with JSX values (multiple roots)
+        let source = "{({ content: <div>a</div><span>b</span> })}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_arrow_block_body_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Arrow function with block body returning multiple roots
+        let source = "{items.map(item => { return <div>{item}</div><hr />; })}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_iife_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // IIFE returning multiple roots
+        let source = "{(() => <div>a</div><div>b</div>)()}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_complex_attributes() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots with complex attributes
+        let source = r#"<div class="a" data-x={1}></div><span style={{color: "red"}}></span>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_spread() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots with spread attributes
+        let source = "<div {...props1}></div><span {...props2}></span>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    #[test]
+    fn parse_astro_multiple_roots_with_namespaced_attrs() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple roots with namespaced attributes (Astro feature)
+        let source = r"<div client:load></div><span set:html={content}></span>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    #[test]
+    fn parse_astro_comparison_not_confused_with_jsx() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Make sure comparisons aren't confused with multiple JSX roots
+        let source = "{a < b && <div>show</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        // Should parse as logical expression, not multiple JSX elements
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_generic_not_confused_with_jsx() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // TypeScript generics shouldn't be confused with JSX
+        let source = "{fn<T>(x) && <div>ok</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_multiple_scripts_as_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple bare script tags at root level
+        let source = "<script>const a = 1;</script><script>const b = 2;</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+
+        // Both should be script elements with AstroScript children
+        for child in &ret.root.body {
+            if let JSXChild::Element(el) = child {
+                if let JSXElementName::Identifier(ident) = &el.opening_element.name {
+                    assert_eq!(ident.name.as_str(), "script");
+                }
+                // Should have AstroScript child
+                assert_eq!(el.children.len(), 1);
+                assert!(matches!(el.children[0], JSXChild::AstroScript(_)));
+            } else {
+                panic!("Expected Element");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_astro_multiple_styles_as_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Multiple style tags at root level
+        let source = "<style>h1 { color: red; }</style><style>h2 { color: blue; }</style>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(ret.root.body.len(), 2);
+    }
+
+    #[test]
+    fn parse_astro_realistic_page_layout() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Realistic Astro page layout with multiple root elements
+        let source = r"<html>
+  <head><title>Page</title></head>
+  <body><slot /></body>
+</html>
+<style>
+  body { margin: 0; }
+</style>
+<script>
+  console.log('loaded');
+</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // html, text, style, text, script
+        let element_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+        assert_eq!(element_count, 3, "Expected html, style, script elements");
+    }
+
+    #[test]
+    fn parse_astro_component_with_multiple_slots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Component-like structure with named slots
+        let source = r#"<header><slot name="header" /></header>
+<main><slot /></main>
+<footer><slot name="footer" /></footer>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let element_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+        assert_eq!(element_count, 3, "Expected header, main, footer");
+    }
+
+    #[test]
+    fn parse_astro_reduce_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Array reduce returning multiple elements
+        let source = "{items.reduce((acc, item) => <>{acc}<div>{item}</div></>, <></>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_flatmap_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // flatMap returning multiple elements per item
+        let source = "{items.flatMap(item => [<dt>{item.term}</dt>, <dd>{item.def}</dd>])}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_entries_with_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Object.entries with multiple elements
+        let source = "{Object.entries(obj).map(([k, v]) => <dt>{k}</dt><dd>{v}</dd>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_async_iteration_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Promise.all with multiple elements (common Astro pattern)
+        let source =
+            "{await Promise.all(items.map(async (item) => <div>{await fetch(item)}</div><hr />))}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_conditional_chain_multiple_roots() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Chained conditionals with multiple roots
+        let source = "{a ? <div>a</div><span>a2</span> : b ? <div>b</div><span>b2</span> : <div>c</div><span>c2</span>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    #[test]
+    fn parse_astro_switch_like_pattern() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Switch-like pattern using logical operators
+        let source = "{(type === 'a' && <div>A</div><span>A2</span>) || (type === 'b' && <div>B</div><span>B2</span>) || <div>default</div>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+    }
+
+    // ==========================================
+    // JSX vs Astro Script Behavior Tests
+    // ==========================================
+    // These tests explicitly demonstrate the difference between how
+    // <script> tags are handled in regular JSX vs Astro files.
+
+    #[test]
+    fn jsx_script_content_is_text() {
+        // In regular JSX/TSX, <script> content is just JSXText (not parsed as code)
+        let allocator = Allocator::default();
+        let source_type = SourceType::tsx(); // Regular TSX, not Astro
+        let source = r#"<div><script>console.log("hello");</script></div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Find the script element in the JSX
+        if let Some(Statement::ExpressionStatement(expr_stmt)) = ret.program.body.first()
+            && let oxc_ast::ast::Expression::JSXElement(jsx_el) = &expr_stmt.expression
+        {
+            // First child of <div> is the <script> element
+            if let Some(JSXChild::Element(script_el)) = jsx_el.children.first() {
+                if let JSXElementName::Identifier(ident) = &script_el.opening_element.name {
+                    assert_eq!(ident.name.as_str(), "script");
+                }
+                // In JSX, script content is JSXText, NOT parsed as code
+                assert_eq!(script_el.children.len(), 1, "Script should have 1 child");
+                match &script_el.children[0] {
+                    JSXChild::Text(text) => {
+                        // The content is raw text, not parsed
+                        assert_eq!(text.value.as_str(), r#"console.log("hello");"#);
+                    }
+                    other => panic!("In JSX, script content should be JSXText, got {other:?}"),
+                }
+            } else {
+                panic!("Expected script element");
+            }
+        }
+    }
+
+    #[test]
+    fn astro_bare_script_content_is_parsed_program() {
+        // In Astro, bare <script> (no attributes) content IS parsed as TypeScript
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script>console.log("hello");</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // In Astro, bare <script> is wrapped in Element with AstroScript child
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(script_el) = &ret.root.body[0] {
+            if let JSXElementName::Identifier(ident) = &script_el.opening_element.name {
+                assert_eq!(ident.name.as_str(), "script");
+            }
+            // In Astro, bare script has AstroScript child with PARSED program
+            assert_eq!(script_el.children.len(), 1, "Script should have 1 child");
+            match &script_el.children[0] {
+                JSXChild::AstroScript(astro_script) => {
+                    // The content IS parsed as TypeScript code!
+                    assert_eq!(
+                        astro_script.program.body.len(),
+                        1,
+                        "Should have 1 parsed statement"
+                    );
+                    // It's an ExpressionStatement containing console.log call
+                    assert!(
+                        matches!(astro_script.program.body[0], Statement::ExpressionStatement(_)),
+                        "Should be parsed as ExpressionStatement"
+                    );
+                }
+                other => {
+                    panic!("In Astro, bare script content should be AstroScript, got {other:?}")
+                }
+            }
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn astro_script_with_attributes_content_is_text() {
+        // In Astro, <script> WITH attributes is treated like HTML (raw text, not parsed)
+        // This follows Astro's convention: bare script = island script (parsed),
+        // script with attrs = regular HTML script (not parsed by Astro)
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script type="module">console.log("hello");</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Script with attributes is a regular JSX Element with text content
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(script_el) = &ret.root.body[0] {
+            if let JSXElementName::Identifier(ident) = &script_el.opening_element.name {
+                assert_eq!(ident.name.as_str(), "script");
+            }
+            // Script with attributes has JSXText child (NOT parsed)
+            assert_eq!(script_el.children.len(), 1, "Script should have 1 child");
+            match &script_el.children[0] {
+                JSXChild::Text(text) => {
+                    // Content is raw text, just like regular JSX
+                    assert_eq!(text.value.as_str(), r#"console.log("hello");"#);
+                }
+                other => panic!(
+                    "Astro script with attributes should have JSXText content, got {other:?}"
+                ),
+            }
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn astro_bare_script_parses_typescript_syntax() {
+        // Bare script in Astro can contain TypeScript-specific syntax
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script>
+const greeting: string = "hello";
+interface User { name: string }
+</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::Element(script_el) = &ret.root.body[0] {
+            if let JSXChild::AstroScript(astro_script) = &script_el.children[0] {
+                // Should have 2 statements: const declaration + interface
+                assert_eq!(astro_script.program.body.len(), 2);
+                assert!(matches!(astro_script.program.body[0], Statement::VariableDeclaration(_)));
+                assert!(matches!(
+                    astro_script.program.body[1],
+                    Statement::TSInterfaceDeclaration(_)
+                ));
+            } else {
+                panic!("Expected AstroScript");
             }
         }
     }
