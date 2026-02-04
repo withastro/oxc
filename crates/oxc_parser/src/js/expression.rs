@@ -1211,6 +1211,7 @@ impl<'a> ParserImpl<'a> {
             // Astro: Multiple JSX elements without explicit fragment
             // When LHS is a JSX element/fragment and we see `<` followed by identifier or `>`,
             // this is another JSX element, not a comparison operator.
+            #[cfg(feature = "astro")]
             if self.source_type.is_astro()
                 && kind == Kind::LAngle
                 && matches!(lhs, Expression::JSXElement(_) | Expression::JSXFragment(_))

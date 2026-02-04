@@ -1,4 +1,5 @@
 //! [Astro](https://astro.build) Parser
+//! Astro file parsing support.
 //!
 //! Astro files have a frontmatter section (TypeScript) delimited by `---` and
 //! an HTML body that can contain JSX expressions.
@@ -14,6 +15,14 @@
 //! <!-- HTML body with JSX expressions -->
 //! <h1>Hello {name}!</h1>
 //! ```
+
+mod jsx;
+mod parse;
+mod scripts;
+
+pub use parse::AstroParserReturn;
+pub use parse::parse_astro;
+pub use scripts::parse_astro_scripts;
 
 use oxc_allocator::{Box, Vec};
 use oxc_ast::ast::*;
@@ -1086,7 +1095,7 @@ const name = "World";
     fn parse_astro_attribute_shorthand() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        let source = r#"<Component {prop} />"#;
+        let source = r"<Component {prop} />";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1299,10 +1308,10 @@ console.log("hello");
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // HTML comments inside expressions should work in Astro
-        let source = r#"<div>{
+        let source = r"<div>{
   /* JSX comment */
   <!-- HTML comment -->
-}</div>"#;
+}</div>";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1317,7 +1326,7 @@ console.log("hello");
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // HTML comment inline with other code
-        let source = r#"<div>{ <!-- comment --> true }</div>"#;
+        let source = r"<div>{ <!-- comment --> true }</div>";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1332,13 +1341,13 @@ console.log("hello");
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Top-level return is allowed in Astro frontmatter per spec §2.1
-        let source = r#"---
+        let source = r"---
 const user = null;
 if (!user) {
   return;
 }
 ---
-<div>Hello</div>"#;
+<div>Hello</div>";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1376,10 +1385,10 @@ if (!user) {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Bare top-level return (not inside any block)
-        let source = r#"---
+        let source = r"---
 return;
 ---
-<div>Hello</div>"#;
+<div>Hello</div>";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1485,7 +1494,7 @@ return;
                 // Count the actual div elements
                 let div_count =
                     fragment.children.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
-                assert_eq!(div_count, 3, "Expected 3 div elements, got {}", div_count);
+                assert_eq!(div_count, 3, "Expected 3 div elements, got {div_count}");
             } else {
                 panic!(
                     "Expected JSXExpression::JSXFragment for multiple elements, got {:?}",
@@ -1626,6 +1635,25 @@ return;
 
     #[test]
     fn parse_astro_nested_script_parsed_as_typescript() {
+        // Helper to recursively find AstroScript nodes
+        fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
+            let mut count = 0;
+            for child in children {
+                match child {
+                    JSXChild::AstroScript(_) => count += 1,
+                    JSXChild::Element(el) => {
+                        // Check if this element has an AstroScript child
+                        count += count_astro_scripts(&el.children);
+                    }
+                    JSXChild::Fragment(f) => {
+                        count += count_astro_scripts(&f.children);
+                    }
+                    _ => {}
+                }
+            }
+            count
+        }
+
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Bare <script> nested inside other elements should still be parsed as TypeScript
@@ -1647,14 +1675,20 @@ return;
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
+        // Should find 2 AstroScript nodes (one in head, one in body)
+        let script_count = count_astro_scripts(&ret.root.body);
+        assert_eq!(script_count, 2, "Expected 2 AstroScript nodes, found {script_count}");
+    }
+
+    #[test]
+    fn parse_astro_nested_script_with_attributes_not_parsed() {
         // Helper to recursively find AstroScript nodes
         fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
             let mut count = 0;
-            for child in children.iter() {
+            for child in children {
                 match child {
                     JSXChild::AstroScript(_) => count += 1,
                     JSXChild::Element(el) => {
-                        // Check if this element has an AstroScript child
                         count += count_astro_scripts(&el.children);
                     }
                     JSXChild::Fragment(f) => {
@@ -1666,51 +1700,25 @@ return;
             count
         }
 
-        // Should find 2 AstroScript nodes (one in head, one in body)
-        let script_count = count_astro_scripts(&ret.root.body);
-        assert_eq!(script_count, 2, "Expected 2 AstroScript nodes, found {}", script_count);
-    }
-
-    #[test]
-    fn parse_astro_nested_script_with_attributes_not_parsed() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // <script> with attributes inside other elements should NOT be parsed
-        let source = r#"<html>
+        let source = r"<html>
 <head>
   <script is:inline>
     const x = 1;
   </script>
 </head>
-</html>"#;
+</html>";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
-
-        // Helper to recursively find AstroScript nodes
-        fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
-            let mut count = 0;
-            for child in children.iter() {
-                match child {
-                    JSXChild::AstroScript(_) => count += 1,
-                    JSXChild::Element(el) => {
-                        count += count_astro_scripts(&el.children);
-                    }
-                    JSXChild::Fragment(f) => {
-                        count += count_astro_scripts(&f.children);
-                    }
-                    _ => {}
-                }
-            }
-            count
-        }
 
         // Should find 0 AstroScript nodes (script has attributes)
         let script_count = count_astro_scripts(&ret.root.body);
         assert_eq!(
             script_count, 0,
-            "Expected 0 AstroScript nodes (script has attributes), found {}",
-            script_count
+            "Expected 0 AstroScript nodes (script has attributes), found {script_count}"
         );
     }
 
@@ -1719,12 +1727,12 @@ return;
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Bare <script> inside an expression container should be parsed as TypeScript
-        let source = r#"{
+        let source = r"{
   <script>
     const x = 1;
     const y = 2;
   </script>
-}"#;
+}";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1760,14 +1768,6 @@ return;
 
     #[test]
     fn parse_astro_script_inside_logical_expression() {
-        let allocator = Allocator::default();
-        let source_type = SourceType::astro();
-        // Bare <script> inside a logical expression (common Astro pattern)
-        let source = r#"{condition && <script>const x = 1;</script>}"#;
-        let ret = Parser::new(&allocator, source, source_type).parse_astro();
-        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
-        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
-
         // Helper to find AstroScript nodes in expression containers
         fn find_astro_scripts_in_expression<'a>(
             expr: &'a oxc_ast::ast::JSXExpression<'a>,
@@ -1797,6 +1797,14 @@ return;
             scripts
         }
 
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Bare <script> inside a logical expression (common Astro pattern)
+        let source = r"{condition && <script>const x = 1;</script>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
         // Body should have one expression container
         assert_eq!(ret.root.body.len(), 1);
         if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
@@ -1812,15 +1820,6 @@ return;
 
     #[test]
     fn parse_astro_script_inside_ternary_expression() {
-        let allocator = Allocator::default();
-        let source_type = SourceType::astro();
-        // Scripts in both branches of a ternary
-        let source =
-            r#"{condition ? <script>const a = 1;</script> : <script>const b = 2;</script>}"#;
-        let ret = Parser::new(&allocator, source, source_type).parse_astro();
-        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
-        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
-
         // Helper to count AstroScript nodes in an expression
         fn count_scripts_in_expression(expr: &oxc_ast::ast::Expression) -> usize {
             use oxc_ast::ast::Expression;
@@ -1836,6 +1835,14 @@ return;
             }
         }
 
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Scripts in both branches of a ternary
+        let source = r"{condition ? <script>const a = 1;</script> : <script>const b = 2;</script>}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
         // Body should have one expression container
         assert_eq!(ret.root.body.len(), 1);
         if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
@@ -1845,8 +1852,7 @@ return;
                     + count_scripts_in_expression(&cond.alternate);
                 assert_eq!(
                     script_count, 2,
-                    "Expected 2 AstroScripts in ternary, found {}",
-                    script_count
+                    "Expected 2 AstroScripts in ternary, found {script_count}"
                 );
             } else {
                 panic!("Expected ConditionalExpression");
@@ -1858,14 +1864,6 @@ return;
 
     #[test]
     fn parse_astro_script_inside_map_callback() {
-        let allocator = Allocator::default();
-        let source_type = SourceType::astro();
-        // Script inside a .map() callback - common Astro pattern
-        let source = r#"{items.map(item => <script>const x = item;</script>)}"#;
-        let ret = Parser::new(&allocator, source, source_type).parse_astro();
-        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
-        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
-
         // Helper to find AstroScript nodes recursively in an expression
         fn find_scripts_in_expr<'a>(
             expr: &'a oxc_ast::ast::Expression<'a>,
@@ -1897,6 +1895,14 @@ return;
             scripts
         }
 
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Script inside a .map() callback - common Astro pattern
+        let source = r"{items.map(item => <script>const x = item;</script>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
         // Body should have one expression container
         assert_eq!(ret.root.body.len(), 1);
         if let JSXChild::ExpressionContainer(container) = &ret.root.body[0] {
@@ -1907,12 +1913,11 @@ return;
                 for arg in &call.arguments {
                     if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
                         // Arrow function with expression body
-                        if arrow.expression {
-                            if let Some(stmt) = arrow.body.statements.first() {
-                                if let Statement::ExpressionStatement(expr_stmt) = stmt {
-                                    scripts.extend(find_scripts_in_expr(&expr_stmt.expression));
-                                }
-                            }
+                        if arrow.expression
+                            && let Some(stmt) = arrow.body.statements.first()
+                            && let Statement::ExpressionStatement(expr_stmt) = stmt
+                        {
+                            scripts.extend(find_scripts_in_expr(&expr_stmt.expression));
                         }
                     }
                 }
@@ -1934,15 +1939,6 @@ return;
 
     #[test]
     fn parse_astro_script_inside_filter_map_chain() {
-        let allocator = Allocator::default();
-        let source_type = SourceType::astro();
-        // Script inside chained array methods - the outer .map() call returns JSX with a script
-        let source =
-            r#"{items.filter(x => x > 0).map(item => <div><script>const y = 1;</script></div>)}"#;
-        let ret = Parser::new(&allocator, source, source_type).parse_astro();
-        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
-        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
-
         // Helper to find all AstroScript nodes recursively in JSX children
         fn find_scripts_in_children<'a>(
             children: &'a [JSXChild<'a>],
@@ -1964,6 +1960,15 @@ return;
             }
             scripts
         }
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // Script inside chained array methods - the outer .map() call returns JSX with a script
+        let source =
+            r"{items.filter(x => x > 0).map(item => <div><script>const y = 1;</script></div>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
         // Verify we have the expression container
         assert_eq!(ret.root.body.len(), 1);
@@ -2005,7 +2010,7 @@ return;
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Script inside arrow function with block body (not concise)
-        let source = r#"{items.map(item => { return <script>const z = 1;</script>; })}"#;
+        let source = r"{items.map(item => { return <script>const z = 1;</script>; })}";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -2019,20 +2024,19 @@ return;
                 for arg in &call.arguments {
                     if let oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) = arg {
                         for stmt in &arrow.body.statements {
-                            if let Statement::ReturnStatement(ret_stmt) = stmt {
-                                if let Some(arg) = &ret_stmt.argument {
-                                    if let oxc_ast::ast::Expression::JSXElement(el) = arg {
-                                        for child in &el.children {
-                                            if let JSXChild::AstroScript(script) = child {
-                                                // Verify the script was parsed
-                                                assert_eq!(
-                                                    script.program.body.len(),
-                                                    1,
-                                                    "Script should have 1 statement"
-                                                );
-                                                found_script = true;
-                                            }
-                                        }
+                            if let Statement::ReturnStatement(ret_stmt) = stmt
+                                && let Some(arg) = &ret_stmt.argument
+                                && let oxc_ast::ast::Expression::JSXElement(el) = arg
+                            {
+                                for child in &el.children {
+                                    if let JSXChild::AstroScript(script) = child {
+                                        // Verify the script was parsed
+                                        assert_eq!(
+                                            script.program.body.len(),
+                                            1,
+                                            "Script should have 1 statement"
+                                        );
+                                        found_script = true;
                                     }
                                 }
                             }

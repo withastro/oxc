@@ -11,6 +11,9 @@
     clippy::match_same_arms,
     unsafe_op_in_unsafe_fn
 )]
+// Some walk functions (e.g. walk_astro_root, walk_astro_frontmatter) are generated
+// but not called because traversal starts from Program, not AstroRoot.
+#![allow(dead_code)]
 
 use std::{cell::Cell, marker::PhantomData};
 

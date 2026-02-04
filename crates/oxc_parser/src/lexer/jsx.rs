@@ -15,6 +15,7 @@ static NOT_ASCII_JSX_ID_CONTINUE_TABLE: SafeByteMatchTable =
 
 /// Astro/HTML attribute names end at these characters.
 /// Everything else is valid in an attribute name.
+#[cfg(feature = "astro")]
 static ASTRO_ATTR_NAME_END_TABLE: SafeByteMatchTable = safe_byte_match_table!(|b| matches!(
     b,
     b'=' | b'>' | b'/' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b'<'
@@ -157,6 +158,7 @@ impl Lexer<'_> {
     /// except whitespace, `=`, `>`, `/`, quotes, and a few others.
     ///
     /// This method reads from the current position until an attribute-name-ending character.
+    #[cfg(feature = "astro")]
     pub(crate) fn read_astro_attribute_name(&mut self) -> Token {
         self.token.set_start(self.offset());
 

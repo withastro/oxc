@@ -256,6 +256,7 @@ impl<'a> ParserImpl<'a> {
 
     /// Read an Astro attribute name from the current position.
     /// Astro attribute names can contain `@`, `.`, and `-` characters.
+    #[cfg(feature = "astro")]
     pub(crate) fn read_astro_attribute_name(&mut self) {
         self.token = self.lexer.read_astro_attribute_name();
     }

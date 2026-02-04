@@ -23,6 +23,8 @@ use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool};
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, Error, OxcDiagnostic};
 use oxc_parser::{ParseOptions, Parser};
 use oxc_resolver::Resolver;
+#[cfg(feature = "astro")]
+use oxc_semantic::SemanticBuilderAstroExt;
 use oxc_semantic::{Semantic, SemanticBuilder};
 use oxc_span::{CompactStr, SourceType, VALID_EXTENSIONS};
 
@@ -960,6 +962,7 @@ impl Runtime {
         mut out_sections: Option<&mut SectionContents<'a>>,
     ) -> SmallVec<[Result<ResolvedModuleRecord, Vec<OxcDiagnostic>>; 1]> {
         // Special handling for Astro files - use full AST parsing
+        #[cfg(feature = "astro")]
         if ext == "astro" {
             return self.process_astro_source(
                 path,
@@ -1075,6 +1078,7 @@ impl Runtime {
 
     /// Process an Astro file using the full Astro parser.
     /// This enables linting of both frontmatter code and JSX template.
+    #[cfg(feature = "astro")]
     fn process_astro_source<'a>(
         &self,
         path: &Path,

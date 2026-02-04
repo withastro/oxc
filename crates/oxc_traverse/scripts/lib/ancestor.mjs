@@ -121,6 +121,9 @@ export default function generateAncestorsCode(types) {
       clippy::ref_option,
       clippy::undocumented_unsafe_blocks,
     )]
+    // Some offset constants (e.g. OFFSET_ASTRO_FRONTMATTER_PROGRAM) are generated
+    // but not used because the corresponding walk functions are not called.
+    #![allow(dead_code)]
 
     use std::{cell::Cell, marker::PhantomData, mem::offset_of};
 
