@@ -34,7 +34,10 @@ const name = "World";
 
     const root = ret.root as AstroRoot;
     expect(root.type).toBe("AstroRoot");
-    expect(root.frontmatter).toBeNull();
+    // When no frontmatter exists, a synthetic empty frontmatter is created
+    // for semantic analysis to have a Program root node
+    expect(root.frontmatter).not.toBeNull();
+    expect(root.frontmatter?.program.body.length).toBe(0);
     expect(root.body.length).toBeGreaterThan(0);
   });
 
@@ -71,10 +74,16 @@ const name = "World";
     const root = ret.root as AstroRoot;
     expect(root.type).toBe("AstroRoot");
 
-    // Find the AstroScript in the body
-    const astroScript = root.body.find((child: any) => child.type === "AstroScript") as
-      | AstroScript
-      | undefined;
+    // Find the script JSXElement in the body
+    const scriptElement = root.body.find(
+      (child: any) => child.type === "JSXElement" && child.openingElement?.name?.name === "script",
+    ) as any;
+    expect(scriptElement).toBeDefined();
+
+    // The AstroScript is inside the script element's children
+    const astroScript = scriptElement?.children?.find(
+      (child: any) => child.type === "AstroScript",
+    ) as AstroScript | undefined;
     expect(astroScript).toBeDefined();
     expect(astroScript?.type).toBe("AstroScript");
     expect(astroScript?.program).toBeDefined();
