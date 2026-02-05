@@ -9,7 +9,7 @@ use crate::{ParseOptions, ParserImpl, parser_parse::UniquePromise};
 
 use super::parse_astro_scripts;
 
-/// Return value of [`parse_astro`] for Astro files.
+/// Return value for parsing Astro files.
 ///
 /// ## AST Validity
 ///
