@@ -6,9 +6,11 @@ use cow_utils::CowUtils;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_data_structures::code_buffer::CodeBuffer;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::AstroCodegenOptions;
-use crate::{Codegen, Context, Gen, GenExpr};
+use oxc_codegen::{Codegen, Context, Gen, GenExpr};
+
+use crate::AstroCodegenOptions;
 
 /// Runtime function names used in generated code.
 mod runtime {
@@ -53,7 +55,6 @@ pub struct AstroCodegen<'a> {
     /// Output buffer
     code: CodeBuffer,
     /// Source text of the original Astro file
-    #[expect(dead_code)]
     source_text: &'a str,
     /// Track if we're inside head element
     in_head: bool,
@@ -72,9 +73,9 @@ pub struct AstroCodegen<'a> {
     /// Whether the source uses `Astro` global (e.g., Astro.props, Astro.slots)
     uses_astro_global: bool,
     /// Map of component names to their import specifiers (for client:only resolution)
-    component_imports: std::collections::HashMap<String, ComponentImportInfo>,
+    component_imports: FxHashMap<String, ComponentImportInfo>,
     /// Set of component names that use client:only
-    client_only_component_names: std::collections::HashSet<String>,
+    client_only_component_names: FxHashSet<String>,
     /// When true, skip printing slot="..." attributes on elements (used for conditional slots)
     skip_slot_attribute: bool,
     /// Collected hoisted scripts for metadata
@@ -171,8 +172,8 @@ impl<'a> AstroCodegen<'a> {
             hydration_directives: Vec::new(),
             module_imports: Vec::new(),
             uses_astro_global,
-            component_imports: std::collections::HashMap::new(),
-            client_only_component_names: std::collections::HashSet::new(),
+            component_imports: FxHashMap::default(),
+            client_only_component_names: FxHashSet::default(),
             skip_slot_attribute: false,
             hoisted_scripts: Vec::new(),
             script_index: 0,
@@ -336,12 +337,13 @@ impl<'a> AstroCodegen<'a> {
                                 // Track hydrated component for metadata
                                 // Only track if it's a component (uppercase) or custom element (has dash)
                                 if (is_component || is_custom)
-                                    && !self.hydrated_components.iter().any(|c| c.name == name) {
-                                        self.hydrated_components.push(HydratedComponent {
-                                            name: name,
-                                            is_custom_element: is_custom,
-                                        });
-                                    }
+                                    && !self.hydrated_components.iter().any(|c| c.name == name)
+                                {
+                                    self.hydrated_components.push(HydratedComponent {
+                                        name,
+                                        is_custom_element: is_custom,
+                                    });
+                                }
                             }
 
                             break; // Only process first client:* directive
@@ -406,12 +408,13 @@ impl<'a> AstroCodegen<'a> {
 
                                 // Track hydrated component
                                 if (is_component || is_custom)
-                                    && !self.hydrated_components.iter().any(|c| c.name == name) {
-                                        self.hydrated_components.push(HydratedComponent {
-                                            name: name,
-                                            is_custom_element: is_custom,
-                                        });
-                                    }
+                                    && !self.hydrated_components.iter().any(|c| c.name == name)
+                                {
+                                    self.hydrated_components.push(HydratedComponent {
+                                        name,
+                                        is_custom_element: is_custom,
+                                    });
+                                }
                             }
 
                             break;
@@ -595,25 +598,26 @@ impl<'a> AstroCodegen<'a> {
                     // Extract the variable object expression
                     if let Some(JSXAttributeValue::ExpressionContainer(container)) = &attr.value
                         && let Some(expr) = container.expression.as_expression()
-                            && let Expression::ObjectExpression(obj) = expr {
-                                // Extract the keys from the object
-                                let keys: Vec<String> = obj
-                                    .properties
-                                    .iter()
-                                    .filter_map(|prop| {
-                                        if let ObjectPropertyKind::ObjectProperty(p) = prop {
-                                            Some(get_property_key_name(&p.key))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                define_vars_keys = Some(keys.join(","));
+                        && let Expression::ObjectExpression(obj) = expr
+                    {
+                        // Extract the keys from the object
+                        let keys: Vec<String> = obj
+                            .properties
+                            .iter()
+                            .filter_map(|prop| {
+                                if let ObjectPropertyKind::ObjectProperty(p) = prop {
+                                    Some(get_property_key_name(&p.key))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        define_vars_keys = Some(keys.join(","));
 
-                                // Generate the script content for define:vars
-                                let content = self.get_script_content(program);
-                                define_vars_value = Some(content);
-                            }
+                        // Generate the script content for define:vars
+                        let content = Self::get_script_content(program);
+                        define_vars_value = Some(content);
+                    }
                 }
             }
         }
@@ -639,7 +643,7 @@ impl<'a> AstroCodegen<'a> {
         } else {
             // Inline script - only add if there's actual content
             // Empty scripts (like <script></script>) are not hoisted by the Go compiler
-            let content = self.get_script_content(program);
+            let content = Self::get_script_content(program);
             if !content.is_empty() {
                 self.hoisted_scripts.push(HoistedScript {
                     script_type: HoistedScriptType::Inline,
@@ -666,9 +670,10 @@ impl<'a> AstroCodegen<'a> {
             if let JSXAttributeItem::Attribute(attr) = attr {
                 let attr_name = get_jsx_attribute_name(&attr.name);
                 if attr_name == "src"
-                    && let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value {
-                        src_value = Some(lit.value.to_string());
-                    }
+                    && let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value
+                {
+                    src_value = Some(lit.value.to_string());
+                }
             }
         }
 
@@ -703,7 +708,7 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Get the script content from a program by re-printing it.
-    fn get_script_content(&self, program: &Program<'a>) -> String {
+    fn get_script_content(program: &Program<'a>) -> String {
         // Use the standard codegen to regenerate the script content
         let codegen = Codegen::new();
         let output = codegen.build(program);
@@ -748,7 +753,7 @@ impl<'a> AstroCodegen<'a> {
         }
 
         // Clone the imports to avoid borrow issues
-        let imports: Vec<_> = self.module_imports.to_vec();
+        let imports: Vec<_> = self.module_imports.clone();
         for import in imports {
             // Include assertion/with clause if present
             if import.assertion == "{}" {
@@ -1137,9 +1142,10 @@ impl<'a> AstroCodegen<'a> {
             if !started {
                 // Skip leading whitespace-only text nodes
                 if let JSXChild::Text(text) = child
-                    && text.value.trim().is_empty() {
-                        continue;
-                    }
+                    && text.value.trim().is_empty()
+                {
+                    continue;
+                }
                 // AstroDoctype is always stripped (prints nothing), so don't
                 // consider it the start of real content. This ensures
                 // whitespace after a doctype is still skipped.
@@ -1194,15 +1200,11 @@ impl<'a> AstroCodegen<'a> {
                         && !is_custom_element(&name)
                         && !is_head_element(&name);
                 }
-                JSXChild::Fragment(_) => {
-                    // Fragment doesn't need render head
+                JSXChild::Fragment(_) | JSXChild::ExpressionContainer(_) => {
+                    // Fragment/expression doesn't need render head
                     return false;
                 }
-                JSXChild::ExpressionContainer(_) => {
-                    // Expression - no render head needed
-                    return false;
-                }
-                _ => continue,
+                _ => {}
             }
         }
         false
@@ -1294,7 +1296,7 @@ impl<'a> AstroCodegen<'a> {
         let name = get_jsx_element_name(&el.opening_element.name);
 
         // Handle <script> elements that should be hoisted (have AstroScript children or `hoist` attribute)
-        if name == "script" && self.is_hoisted_script(el) {
+        if name == "script" && Self::is_hoisted_script(el) {
             // At root level (depth 0), hoisted scripts are completely removed from template
             // When nested inside another element (depth > 0), emit $$renderScript call
             if self.element_depth > 0 {
@@ -1340,7 +1342,7 @@ impl<'a> AstroCodegen<'a> {
 
     /// Check if a script element should be hoisted.
     /// A script is hoisted if it meets the attribute criteria AND has content.
-    fn is_hoisted_script(&self, el: &JSXElement<'a>) -> bool {
+    fn is_hoisted_script(el: &JSXElement<'a>) -> bool {
         // First check if attributes indicate hoisting
         if !should_hoist_script(&el.opening_element.attributes) {
             return false;
@@ -1414,7 +1416,7 @@ impl<'a> AstroCodegen<'a> {
         // Check for set:html or set:text on components (including Fragment)
         // <Component set:html={...} /> becomes $$renderComponent with a default slot containing $$unescapeHTML
         // <Component set:text={...} /> becomes $$renderComponent with a default slot containing the value directly
-        let set_directive = self.extract_set_html_value(&el.opening_element.attributes);
+        let set_directive = Self::extract_set_html_value(&el.opening_element.attributes);
 
         self.print("${");
         self.print(runtime::RENDER_COMPONENT);
@@ -1503,7 +1505,6 @@ impl<'a> AstroCodegen<'a> {
     /// - needs_unescape is true for expressions (need $$unescapeHTML), false for literals
     /// - is_raw_text is true for set:text with string literal (should be inlined without ${})
     fn extract_set_html_value(
-        &self,
         attrs: &[JSXAttributeItem<'a>],
     ) -> Option<(String, bool, bool, bool)> {
         for attr in attrs {
@@ -1608,13 +1609,13 @@ impl<'a> AstroCodegen<'a> {
             if let JSXAttributeItem::Attribute(attr) = attr {
                 let name = get_jsx_attribute_name(&attr.name);
                 if name == "transition:name" {
-                    transition_name = Some(self.get_attr_value_string(attr));
+                    transition_name = Some(Self::get_attr_value_string(attr));
                 } else if name == "transition:animate" {
-                    transition_animate = Some(self.get_attr_value_string(attr));
+                    transition_animate = Some(Self::get_attr_value_string(attr));
                 } else if name == "transition:persist" {
                     transition_persist = true;
                 } else if name == "transition:persist-props" {
-                    transition_persist_props = Some(self.get_attr_value_string(attr));
+                    transition_persist_props = Some(Self::get_attr_value_string(attr));
                 }
             }
         }
@@ -1633,9 +1634,10 @@ impl<'a> AstroCodegen<'a> {
 
                     // Skip filtered names
                     if let Some(names) = skip_names
-                        && names.contains(&name.as_str()) {
-                            continue;
-                        }
+                        && names.contains(&name.as_str())
+                    {
+                        continue;
+                    }
 
                     // Skip transition directives - already handled above
                     if name.starts_with("transition:") {
@@ -1787,12 +1789,11 @@ impl<'a> AstroCodegen<'a> {
     fn print_html_element(&mut self, el: &JSXElement<'a>, name: &str) {
         // Handle <slot> element specially - it's a slot placeholder, not an HTML element
         // Unless it has is:inline, in which case render as raw HTML
-        if name == "slot"
-            && !self.has_is_inline_attribute(&el.opening_element.attributes) {
-                self.print_slot_element(el);
-                return;
-            }
-            // Fall through to render as regular HTML element for is:inline slots
+        if name == "slot" && !Self::has_is_inline_attribute(&el.opening_element.attributes) {
+            self.print_slot_element(el);
+            return;
+        }
+        // Fall through to render as regular HTML element for is:inline slots
 
         // Check if this is a special element
         let is_head = name == "head";
@@ -1807,7 +1808,7 @@ impl<'a> AstroCodegen<'a> {
         self.maybe_insert_render_head(name);
 
         // Extract set:html and set:text directives
-        let set_directive = self.extract_set_directive(&el.opening_element.attributes);
+        let set_directive = Self::extract_set_directive(&el.opening_element.attributes);
 
         // Opening tag
         self.print("<");
@@ -1861,13 +1862,13 @@ impl<'a> AstroCodegen<'a> {
         }
     }
 
-    /// Print a <slot> element as $$renderSlot call
-    /// <slot /> -> $$renderSlot($$result, $$slots["default"])
-    /// <slot name="foo" /> -> $$renderSlot($$result, $$slots["foo"])
-    /// <slot><p>fallback</p></slot> -> $$renderSlot($$result, $$slots["default"], $$render`<p>fallback</p>`)
+    /// Print a `<slot>` element as `$$renderSlot` call
+    /// `<slot />` -> `$$renderSlot($$result, $$slots["default"])`
+    /// `<slot name="foo" />` -> `$$renderSlot($$result, $$slots["foo"])`
+    /// `<slot><p>fallback</p></slot>` -> `$$renderSlot($$result, $$slots["default"], $$render\`<p>fallback</p>\`)`
     fn print_slot_element(&mut self, el: &JSXElement<'a>) {
         // Extract slot name from attributes (default is "default")
-        let slot_name = self.extract_slot_name(&el.opening_element.attributes);
+        let slot_name = Self::extract_slot_name(&el.opening_element.attributes);
 
         self.print("${");
         self.print(runtime::RENDER_SLOT);
@@ -1892,7 +1893,7 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Extract the name attribute from a slot element, defaulting to "default"
-    fn extract_slot_name(&self, attrs: &[JSXAttributeItem<'a>]) -> String {
+    fn extract_slot_name(attrs: &[JSXAttributeItem<'a>]) -> String {
         for attr in attrs {
             if let JSXAttributeItem::Attribute(attr) = attr {
                 let attr_name = get_jsx_attribute_name(&attr.name);
@@ -1921,7 +1922,7 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Check if element has is:inline attribute
-    fn has_is_inline_attribute(&self, attrs: &[JSXAttributeItem<'a>]) -> bool {
+    fn has_is_inline_attribute(attrs: &[JSXAttributeItem<'a>]) -> bool {
         for attr in attrs {
             if let JSXAttributeItem::Attribute(attr) = attr {
                 let name = get_jsx_attribute_name(&attr.name);
@@ -1939,7 +1940,6 @@ impl<'a> AstroCodegen<'a> {
     /// Returns (directive_type, value, needs_unescape, is_raw_text)
     /// - is_raw_text is true for set:text with string literal (should be inlined without ${})
     fn extract_set_directive(
-        &self,
         attrs: &[JSXAttributeItem<'a>],
     ) -> Option<(&'static str, String, bool, bool)> {
         for attr in attrs {
@@ -2012,14 +2012,14 @@ impl<'a> AstroCodegen<'a> {
                         class_list_expr = Some(expr);
                     }
                 } else if name == "transition:name" {
-                    transition_name = Some(self.get_attr_value_string(attr));
+                    transition_name = Some(Self::get_attr_value_string(attr));
                 } else if name == "transition:animate" {
-                    transition_animate = Some(self.get_attr_value_string(attr));
+                    transition_animate = Some(Self::get_attr_value_string(attr));
                 } else if name == "transition:persist" {
-                    transition_persist = Some(self.get_attr_value_string_or_empty(attr));
+                    transition_persist = Some(Self::get_attr_value_string_or_empty(attr));
                 } else if name == "transition:persist-props" {
                     // This is handled like transition:persist but also sets props
-                    transition_persist = Some(self.get_attr_value_string_or_empty(attr));
+                    transition_persist = Some(Self::get_attr_value_string_or_empty(attr));
                 }
             }
         }
@@ -2030,9 +2030,8 @@ impl<'a> AstroCodegen<'a> {
         // Handle transition:persist - if there's a transition:name, use that for persist value
         // Otherwise use $$createTransitionScope
         if let Some(persist_val) = &transition_persist {
-            if transition_name.is_some() {
+            if let Some(name_val) = &transition_name {
                 // When transition:name is present, use the name value for persist (static attr)
-                let name_val = transition_name.as_ref().unwrap();
                 // Strip quotes if present for static attribute value
                 let clean_val = name_val.trim_matches('"');
                 self.print(&format!(" data-astro-transition-persist=\"{clean_val}\""));
@@ -2124,9 +2123,8 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Get attribute value as a string representation for codegen
-    fn get_attr_value_string(&self, attr: &JSXAttribute<'a>) -> String {
+    fn get_attr_value_string(attr: &JSXAttribute<'a>) -> String {
         match &attr.value {
-            None => "\"\"".to_string(),
             Some(JSXAttributeValue::StringLiteral(lit)) => {
                 format!("\"{}\"", escape_double_quotes(lit.value.as_str()))
             }
@@ -2154,10 +2152,10 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Get attribute value as a string, or empty string if no value (for boolean attrs)
-    fn get_attr_value_string_or_empty(&self, attr: &JSXAttribute<'a>) -> String {
+    fn get_attr_value_string_or_empty(attr: &JSXAttribute<'a>) -> String {
         match &attr.value {
             None => String::new(),
-            _ => self.get_attr_value_string(attr),
+            _ => Self::get_attr_value_string(attr),
         }
     }
 
@@ -2173,9 +2171,8 @@ impl<'a> AstroCodegen<'a> {
         self.transition_counter.set(counter + 1);
 
         // Hash the combination of source hash + counter (like Go's "%s-%v" format)
-        let input = format!("{}-{}", self.source_hash, counter);
         let mut hasher = DefaultHasher::new();
-        input.hash(&mut hasher);
+        format!("{}-{}", self.source_hash, counter).hash(&mut hasher);
         let hash = hasher.finish();
 
         // Convert to base32-like lowercase string (8 chars)
@@ -2508,9 +2505,10 @@ impl<'a> AstroCodegen<'a> {
         if arrow.expression {
             // Expression body
             if let Some(expr) = arrow.body.statements.first()
-                && let oxc_ast::ast::Statement::ExpressionStatement(expr_stmt) = expr {
-                    self.print_conditional_slot_branch(&expr_stmt.expression);
-                }
+                && let oxc_ast::ast::Statement::ExpressionStatement(expr_stmt) = expr
+            {
+                self.print_conditional_slot_branch(&expr_stmt.expression);
+            }
         } else {
             // Block body with slot-aware statements
             self.print("{\n");
@@ -2841,9 +2839,10 @@ impl<'a> AstroCodegen<'a> {
         if arrow.expression {
             // Expression body - may contain JSX
             if let Some(expr) = arrow.body.statements.first()
-                && let oxc_ast::ast::Statement::ExpressionStatement(expr_stmt) = expr {
-                    self.print_expression(&expr_stmt.expression);
-                }
+                && let oxc_ast::ast::Statement::ExpressionStatement(expr_stmt) = expr
+            {
+                self.print_expression(&expr_stmt.expression);
+            }
         } else {
             // Block body - need to handle JSX in return statements
             self.print_jsx_aware_function_body(&arrow.body);
@@ -3161,10 +3160,11 @@ fn get_slot_attribute<'a>(attrs: &'a [JSXAttributeItem<'a>]) -> Option<&'a str> 
     for attr in attrs {
         if let JSXAttributeItem::Attribute(attr) = attr
             && let JSXAttributeName::Identifier(ident) = &attr.name
-                && ident.name.as_str() == "slot"
-                    && let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value {
-                        return Some(lit.value.as_str());
-                    }
+            && ident.name.as_str() == "slot"
+            && let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value
+        {
+            return Some(lit.value.as_str());
+        }
     }
     None
 }
@@ -3173,25 +3173,26 @@ fn get_slot_attribute_value(attrs: &[JSXAttributeItem<'_>]) -> Option<SlotValue>
     for attr in attrs {
         if let JSXAttributeItem::Attribute(attr) = attr
             && let JSXAttributeName::Identifier(ident) = &attr.name
-                && ident.name.as_str() == "slot" {
-                    match &attr.value {
-                        Some(JSXAttributeValue::StringLiteral(lit)) => {
-                            return Some(SlotValue::Static(lit.value.to_string()));
-                        }
-                        Some(JSXAttributeValue::ExpressionContainer(expr)) => {
-                            if let Some(e) = expr.expression.as_expression() {
-                                let mut codegen = Codegen::new();
-                                e.print_expr(
-                                    &mut codegen,
-                                    oxc_syntax::precedence::Precedence::Lowest,
-                                    Context::default(),
-                                );
-                                return Some(SlotValue::Dynamic(codegen.into_source_text()));
-                            }
-                        }
-                        _ => {}
+            && ident.name.as_str() == "slot"
+        {
+            match &attr.value {
+                Some(JSXAttributeValue::StringLiteral(lit)) => {
+                    return Some(SlotValue::Static(lit.value.to_string()));
+                }
+                Some(JSXAttributeValue::ExpressionContainer(expr)) => {
+                    if let Some(e) = expr.expression.as_expression() {
+                        let mut codegen = Codegen::new();
+                        e.print_expr(
+                            &mut codegen,
+                            oxc_syntax::precedence::Precedence::Lowest,
+                            Context::default(),
+                        );
+                        return Some(SlotValue::Dynamic(codegen.into_source_text()));
                     }
                 }
+                _ => {}
+            }
+        }
     }
     None
 }
@@ -3231,8 +3232,6 @@ fn extract_slots_from_expression<'a>(expr: &'a JSXExpression<'a>) -> ExpressionS
 /// Recursively collect slot names from an expression.
 fn collect_slots_from_expression<'a>(expr: &'a JSXExpression<'a>, slots: &mut Vec<&'a str>) {
     match expr {
-        JSXExpression::EmptyExpression(_) => {}
-        JSXExpression::Identifier(_) => {}
         JSXExpression::JSXElement(el) => {
             if let Some(slot_name) = get_slot_attribute(&el.opening_element.attributes) {
                 slots.push(slot_name);
@@ -3575,6 +3574,7 @@ fn get_component_name(filename: Option<&str>) -> String {
 }
 
 #[cfg(test)]
+#[expect(clippy::needless_raw_string_hashes, clippy::uninlined_format_args, clippy::print_stderr)]
 mod tests {
     use super::*;
     use oxc_allocator::Allocator;

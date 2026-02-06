@@ -109,6 +109,8 @@ oxc = { version = "0.112.0", path = "crates/oxc" } # Main entry point
 oxc_allocator = { version = "0.112.0", path = "crates/oxc_allocator" } # Memory management
 oxc_ast = { version = "0.112.0", path = "crates/oxc_ast" } # AST definitions
 oxc_ast_macros = { version = "0.112.0", path = "crates/oxc_ast_macros" } # AST proc macros
+oxc_astro_codegen = { version = "0.112.0", path = "crates/oxc_astro_codegen" } # Astro code generation
+oxc_astro_napi = { version = "0.112.0", path = "napi/astro" } # Node.js Astro binding
 oxc_ast_visit = { version = "0.112.0", path = "crates/oxc_ast_visit" } # AST visitor pattern
 oxc_cfg = { version = "0.112.0", path = "crates/oxc_cfg" } # Control flow graph
 oxc_codegen = { version = "0.112.0", path = "crates/oxc_codegen", default-features = false } # Code generation
@@ -243,7 +245,7 @@ unicode-width = "0.2"
 website_common = { path = "tasks/website_common" }
 
 [workspace.metadata.cargo-shear]
-ignored = ["oxc_transform_napi", "oxc_parser_napi", "oxc_minify_napi"]
+ignored = ["oxc_transform_napi", "oxc_parser_napi", "oxc_minify_napi", "oxc_astro_napi"]
 
 [profile.dev]
 # Disabling debug info speeds up local and CI builds,

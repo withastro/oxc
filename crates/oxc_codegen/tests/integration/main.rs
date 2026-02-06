@@ -1,6 +1,4 @@
 #![expect(clippy::missing_panics_doc, clippy::literal_string_with_formatting_args)]
-#[cfg(feature = "astro")]
-pub mod astro;
 pub mod comments;
 pub mod esbuild;
 pub mod js;

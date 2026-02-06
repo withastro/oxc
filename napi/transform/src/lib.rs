@@ -10,11 +10,6 @@
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
-#[cfg(feature = "astro")]
-mod astro;
-#[cfg(feature = "astro")]
-pub use astro::*;
-
 mod isolated_declaration;
 pub use isolated_declaration::*;
 

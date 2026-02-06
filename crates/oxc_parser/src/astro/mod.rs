@@ -3900,32 +3900,10 @@ export async function getStaticPaths() {
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Count and print all children with their spans
-        eprintln!("Source length: {}", source.len());
-        eprintln!("Number of body children: {}", ret.root.body.len());
-        for (i, child) in ret.root.body.iter().enumerate() {
-            let (kind, span) = match child {
-                JSXChild::Text(t) => (format!("Text: {:?}", t.value.as_str()), t.span),
-                JSXChild::Element(e) => (format!("Element: {:?}", e.opening_element.name), e.span),
-                JSXChild::AstroComment(c) => {
-                    (format!("AstroComment: {:?}", c.value.as_str()), c.span)
-                }
-                JSXChild::AstroDoctype(d) => {
-                    (format!("AstroDoctype: {:?}", d.value.as_str()), d.span)
-                }
-                JSXChild::Fragment(f) => ("Fragment".to_string(), f.span),
-                JSXChild::ExpressionContainer(e) => ("ExpressionContainer".to_string(), e.span),
-                JSXChild::Spread(s) => ("Spread".to_string(), s.span),
-                JSXChild::AstroScript(s) => ("AstroScript".to_string(), s.span),
-            };
-            eprintln!("  Child {}: {} [span: {}..{}]", i, kind, span.start, span.end);
-        }
-
         // Should have at least: comment, text, meta, text, comment, text, link
         // That's 7 children (comments + elements + whitespace text nodes)
         let comment_count =
             ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
-        eprintln!("Comment count: {}", comment_count);
 
         assert_eq!(comment_count, 2, "Expected 2 HTML comments in the output");
     }
@@ -3977,7 +3955,7 @@ export async function getStaticPaths() {
     #[test]
     fn parse_astro_math_expression_attributes_still_work() {
         // Expression attributes on <math> itself should still work
-        let source = r#"<math set:html={test} />"#;
+        let source = r"<math set:html={test} />";
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         let ret = Parser::new(&allocator, source, source_type).parse_astro();

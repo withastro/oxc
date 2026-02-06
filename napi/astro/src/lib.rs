@@ -1,17 +1,27 @@
 //! Astro file compilation to JavaScript.
 
+#[cfg(all(
+    feature = "allocator",
+    not(any(
+        target_arch = "arm",
+        target_os = "freebsd",
+        target_os = "windows",
+        target_family = "wasm"
+    ))
+))]
+#[global_allocator]
+static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
+
 use std::mem;
 
 use napi::{Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
 
-use oxc::{
-    allocator::Allocator,
-    codegen::astro::{AstroCodegen, AstroCodegenOptions},
-    parser::{ParseOptions, Parser},
-    span::SourceType,
-};
+use oxc_allocator::Allocator;
+use oxc_astro_codegen::{AstroCodegen, AstroCodegenOptions};
 use oxc_napi::OxcError;
+use oxc_parser::{ParseOptions, Parser};
+use oxc_span::SourceType;
 
 /// Options for compiling Astro files to JavaScript.
 #[napi(object)]
@@ -30,6 +40,16 @@ pub struct AstroCompileOptions {
     ///
     /// @default false
     pub include_metadata: Option<bool>,
+
+    /// Arguments passed to `$$createAstro` when the Astro global is used.
+    /// Defaults to `"https://astro.build"`.
+    pub astro_global_args: Option<String>,
+
+    /// Whether to strip HTML comments from component slot children.
+    /// Matches the official Astro compiler behavior by default.
+    ///
+    /// @default true
+    pub strip_slot_comments: Option<bool>,
 }
 
 /// Result of compiling an Astro file.
@@ -74,6 +94,8 @@ fn compile_astro_impl(source_text: &str, options: &AstroCompileOptions) -> Astro
         internal_url: options.internal_url.clone(),
         filename: options.filename.clone(),
         include_metadata: options.include_metadata.unwrap_or(false),
+        astro_global_args: options.astro_global_args.clone(),
+        strip_slot_comments: options.strip_slot_comments.unwrap_or(true),
     };
 
     // Generate JavaScript code
@@ -90,7 +112,7 @@ fn compile_astro_impl(source_text: &str, options: &AstroCompileOptions) -> Astro
 ///
 /// @example
 /// ```javascript
-/// import { compileAstroSync } from '@aspect-build/oxc-transform';
+/// import { compileAstroSync } from 'oxc-astro';
 ///
 /// const result = compileAstroSync(`---
 /// const name = "World";
@@ -143,7 +165,7 @@ impl Task for AstroCompileTask {
 ///
 /// @example
 /// ```javascript
-/// import { compileAstro } from '@aspect-build/oxc-transform';
+/// import { compileAstro } from 'oxc-astro';
 ///
 /// const result = await compileAstro(`---
 /// const name = "World";

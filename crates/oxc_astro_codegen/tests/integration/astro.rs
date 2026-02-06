@@ -15,7 +15,27 @@
 //! - MathML content with `{...}` that looks like expressions (e.g., `{2x}`)
 //! - Invalid JS syntax that Go's token-based parser tolerates (e.g., unbalanced braces)
 
-#![cfg(feature = "astro")]
+#![allow(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::cast_precision_loss,
+    clippy::needless_raw_string_hashes,
+    clippy::uninlined_format_args,
+    clippy::collapsible_if,
+    clippy::redundant_else,
+    clippy::needless_continue,
+    clippy::match_same_arms,
+    clippy::unused_peekable,
+    clippy::iter_over_hash_type,
+    clippy::option_map_or_none,
+    clippy::manual_map,
+    clippy::cast_lossless,
+    clippy::explicit_iter_loop,
+    clippy::format_push_string,
+    clippy::allow_attributes
+)]
 
 use std::collections::HashSet;
 use std::fs;
@@ -23,7 +43,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use oxc_allocator::Allocator;
-use oxc_codegen::astro::{AstroCodegen, AstroCodegenOptions};
+use oxc_astro_codegen::{AstroCodegen, AstroCodegenOptions};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 
@@ -184,7 +204,7 @@ fn parse_options(content: &str) -> SnapshotOptions {
     options
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn compile_astro(source: &str) -> Result<String, String> {
     compile_astro_with_options(source, &SnapshotOptions::default())
 }
@@ -589,7 +609,7 @@ fn load_all_test_cases() -> Vec<SnapshotTestCase> {
         let entry = entry.unwrap();
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "snap") {
+        if path.extension().is_some_and(|ext| ext == "snap") {
             let content = fs::read_to_string(&path).unwrap();
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
 
@@ -813,7 +833,7 @@ fn test_astro_show_first_failure() {
 /// Update the "Actual (Oxc)" section in all snapshot files with current output.
 /// Run this manually when you want to update snapshots after making changes.
 #[test]
-#[ignore]
+#[ignore = "run manually to update snapshots"]
 fn update_astro_snapshots() {
     let snapshots_dir = get_local_snapshots_dir();
 
@@ -828,7 +848,7 @@ fn update_astro_snapshots() {
         let entry = entry.unwrap();
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "snap") {
+        if path.extension().is_some_and(|ext| ext == "snap") {
             let content = fs::read_to_string(&path).unwrap();
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
 

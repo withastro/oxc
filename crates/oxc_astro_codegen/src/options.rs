@@ -51,24 +51,28 @@ impl AstroCodegenOptions {
     }
 
     /// Set the internal URL for Astro runtime imports.
+    #[must_use]
     pub fn with_internal_url(mut self, url: impl Into<String>) -> Self {
         self.internal_url = Some(url.into());
         self
     }
 
     /// Set the filename.
+    #[must_use]
     pub fn with_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename = Some(filename.into());
         self
     }
 
     /// Include metadata export.
+    #[must_use]
     pub fn with_metadata(mut self, include: bool) -> Self {
         self.include_metadata = include;
         self
     }
 
     /// Set the Astro global arguments.
+    #[must_use]
     pub fn with_astro_global_args(mut self, args: impl Into<String>) -> Self {
         self.astro_global_args = Some(args.into());
         self
@@ -78,6 +82,7 @@ impl AstroCodegenOptions {
     ///
     /// When `true` (default), matches Go compiler behavior by excluding comments from slots.
     /// When `false`, preserves HTML comments in slot content.
+    #[must_use]
     pub fn with_strip_slot_comments(mut self, strip: bool) -> Self {
         self.strip_slot_comments = strip;
         self

@@ -1765,6 +1765,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxc_astro_codegen"
+version = "0.112.0"
+dependencies = [
+ "cow-utils",
+ "insta",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_data_structures",
+ "oxc_parser",
+ "oxc_span",
+ "oxc_syntax",
+ "pico-args",
+ "rustc-hash",
+]
+
+[[package]]
+name = "oxc_astro_napi"
+version = "0.112.0"
+dependencies = [
+ "mimalloc-safe",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "oxc_allocator",
+ "oxc_astro_codegen",
+ "oxc_napi",
+ "oxc_parser",
+ "oxc_span",
+]
+
+[[package]]
 name = "oxc_benchmark"
 version = "0.0.0"
 dependencies = [
@@ -2423,7 +2455,6 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "oxc",
- "oxc_codegen",
  "oxc_napi",
  "oxc_sourcemap",
  "rustc-hash",
