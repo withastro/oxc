@@ -2143,6 +2143,7 @@ impl ESTree for JSXChild<'_> {
             Self::Spread(it) => it.serialize(serializer),
             Self::AstroScript(it) => it.serialize(serializer),
             Self::AstroDoctype(it) => it.serialize(serializer),
+            Self::AstroComment(it) => it.serialize(serializer),
         }
     }
 }
@@ -3275,6 +3276,16 @@ impl ESTree for AstroDoctype<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) {
         let mut state = serializer.serialize_struct();
         state.serialize_field("type", &JsonSafeString("AstroDoctype"));
+        state.serialize_field("value", &self.value);
+        state.serialize_span(self.span);
+        state.end();
+    }
+}
+
+impl ESTree for AstroComment<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) {
+        let mut state = serializer.serialize_struct();
+        state.serialize_field("type", &JsonSafeString("AstroComment"));
         state.serialize_field("value", &self.value);
         state.serialize_span(self.span);
         state.end();

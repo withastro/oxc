@@ -12,7 +12,7 @@ use oxc_span::{GetSpan, Span};
 use crate::ast::*;
 
 /// The largest integer value that can be mapped to an `AstType`/`AstKind` enum variant.
-pub const AST_TYPE_MAX: u8 = 191;
+pub const AST_TYPE_MAX: u8 = 192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -209,6 +209,7 @@ pub enum AstType {
     AstroFrontmatter = 189,
     AstroScript = 190,
     AstroDoctype = 191,
+    AstroComment = 192,
 }
 
 /// Untyped AST Node Kind
@@ -425,6 +426,7 @@ pub enum AstKind<'a> {
     AstroFrontmatter(&'a AstroFrontmatter<'a>) = AstType::AstroFrontmatter as u8,
     AstroScript(&'a AstroScript<'a>) = AstType::AstroScript as u8,
     AstroDoctype(&'a AstroDoctype<'a>) = AstType::AstroDoctype as u8,
+    AstroComment(&'a AstroComment<'a>) = AstType::AstroComment as u8,
 }
 
 impl AstKind<'_> {
@@ -634,6 +636,7 @@ impl GetSpan for AstKind<'_> {
             Self::AstroFrontmatter(it) => it.span(),
             Self::AstroScript(it) => it.span(),
             Self::AstroDoctype(it) => it.span(),
+            Self::AstroComment(it) => it.span(),
         }
     }
 }
@@ -833,6 +836,7 @@ impl GetAddress for AstKind<'_> {
             Self::AstroFrontmatter(it) => it.unstable_address(),
             Self::AstroScript(it) => it.unstable_address(),
             Self::AstroDoctype(it) => it.unstable_address(),
+            Self::AstroComment(it) => it.unstable_address(),
         }
     }
 }
@@ -1806,5 +1810,10 @@ impl<'a> AstKind<'a> {
     #[inline]
     pub fn as_astro_doctype(self) -> Option<&'a AstroDoctype<'a>> {
         if let Self::AstroDoctype(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_comment(self) -> Option<&'a AstroComment<'a>> {
+        if let Self::AstroComment(v) = self { Some(v) } else { None }
     }
 }

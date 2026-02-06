@@ -587,8 +587,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Severity, HelperMode, isolatedDeclaration, isolatedDeclarationSync, moduleRunnerTransform, moduleRunnerTransformSync, transform, transformSync } = nativeBinding
+const { Severity, AstroCompileResult, compileAstro, compileAstroSync, HelperMode, isolatedDeclaration, isolatedDeclarationSync, moduleRunnerTransform, moduleRunnerTransformSync, transform, transformSync } = nativeBinding
 export { Severity }
+export { AstroCompileResult }
+export { compileAstro }
+export { compileAstroSync }
 export { HelperMode }
 export { isolatedDeclaration }
 export { isolatedDeclarationSync }

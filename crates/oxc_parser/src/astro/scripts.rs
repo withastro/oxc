@@ -83,7 +83,10 @@ fn parse_scripts_in_child<'a>(
                 errors,
             );
         }
-        JSXChild::Text(_) | JSXChild::Spread(_) | JSXChild::AstroDoctype(_) => {
+        JSXChild::Text(_)
+        | JSXChild::Spread(_)
+        | JSXChild::AstroDoctype(_)
+        | JSXChild::AstroComment(_) => {
             // No scripts to parse in these
         }
     }

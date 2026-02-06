@@ -1075,7 +1075,8 @@ export type JSXChild =
   | JSXExpressionContainer
   | JSXSpreadChild
   | AstroScript
-  | AstroDoctype;
+  | AstroDoctype
+  | AstroComment;
 
 export interface JSXSpreadChild extends Span {
   type: "JSXSpreadChild";
@@ -1709,6 +1710,12 @@ export interface AstroDoctype extends Span {
   parent: Node;
 }
 
+export interface AstroComment extends Span {
+  type: "AstroComment";
+  value: string;
+  parent: Node;
+}
+
 export type AssignmentOperator =
   | "="
   | "+="
@@ -1946,4 +1953,5 @@ export type Node =
   | AstroFrontmatter
   | AstroScript
   | AstroDoctype
+  | AstroComment
   | ParamPattern;

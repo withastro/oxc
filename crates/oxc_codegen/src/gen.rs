@@ -2613,6 +2613,11 @@ impl Gen for JSXChild<'_> {
                 p.print_str(doctype.value.as_str());
                 p.print_str(">");
             }
+            Self::AstroComment(comment) => {
+                p.print_str("<!--");
+                p.print_str(comment.value.as_str());
+                p.print_str("-->");
+            }
         }
     }
 }

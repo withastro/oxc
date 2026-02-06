@@ -1443,6 +1443,7 @@ impl<'a> Visit<'a> for ChildScopeCollector {
                 // Remaining variants do not contain scopes:
                 // `Text`
                 // `AstroDoctype`
+                // `AstroComment`
             }
         }
     }
@@ -2041,6 +2042,11 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline(always)]
     fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
+        // Struct does not contain a scope. Halt traversal.
+    }
+
+    #[inline(always)]
+    fn visit_astro_comment(&mut self, it: &AstroComment<'a>) {
         // Struct does not contain a scope. Halt traversal.
     }
 

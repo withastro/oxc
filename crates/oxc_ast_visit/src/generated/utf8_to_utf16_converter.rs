@@ -1150,4 +1150,10 @@ impl<'a> VisitMut<'a> for Utf8ToUtf16Converter<'_> {
         walk_mut::walk_astro_doctype(self, it);
         self.convert_offset(&mut it.span.end);
     }
+
+    fn visit_astro_comment(&mut self, it: &mut AstroComment<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_comment(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
 }

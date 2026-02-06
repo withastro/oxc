@@ -3645,6 +3645,7 @@ unsafe fn walk_jsx_child<'a, State, Tr: Traverse<'a, State>>(
         JSXChild::Spread(node) => walk_jsx_spread_child(traverser, (&mut **node) as *mut _, ctx),
         JSXChild::AstroScript(node) => walk_astro_script(traverser, (&mut **node) as *mut _, ctx),
         JSXChild::AstroDoctype(node) => walk_astro_doctype(traverser, (&mut **node) as *mut _, ctx),
+        JSXChild::AstroComment(node) => walk_astro_comment(traverser, (&mut **node) as *mut _, ctx),
     }
     traverser.exit_jsx_child(&mut *node, ctx);
 }
@@ -5795,6 +5796,15 @@ unsafe fn walk_astro_doctype<'a, State, Tr: Traverse<'a, State>>(
 ) {
     traverser.enter_astro_doctype(&mut *node, ctx);
     traverser.exit_astro_doctype(&mut *node, ctx);
+}
+
+unsafe fn walk_astro_comment<'a, State, Tr: Traverse<'a, State>>(
+    traverser: &mut Tr,
+    node: *mut AstroComment<'a>,
+    ctx: &mut TraverseCtx<'a, State>,
+) {
+    traverser.enter_astro_comment(&mut *node, ctx);
+    traverser.exit_astro_comment(&mut *node, ctx);
 }
 
 unsafe fn walk_statements<'a, State, Tr: Traverse<'a, State>>(

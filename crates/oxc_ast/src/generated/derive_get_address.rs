@@ -598,6 +598,7 @@ impl GetAddress for JSXChild<'_> {
             Self::Spread(it) => GetAddress::address(it),
             Self::AstroScript(it) => GetAddress::address(it),
             Self::AstroDoctype(it) => GetAddress::address(it),
+            Self::AstroComment(it) => GetAddress::address(it),
         }
     }
 }

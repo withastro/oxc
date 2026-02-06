@@ -1461,6 +1461,7 @@ impl GetSpanMut for JSXChild<'_> {
             Self::Spread(it) => GetSpanMut::span_mut(&mut **it),
             Self::AstroScript(it) => GetSpanMut::span_mut(&mut **it),
             Self::AstroDoctype(it) => GetSpanMut::span_mut(&mut **it),
+            Self::AstroComment(it) => GetSpanMut::span_mut(&mut **it),
         }
     }
 }
@@ -2205,6 +2206,13 @@ impl GetSpanMut for AstroScript<'_> {
 }
 
 impl GetSpanMut for AstroDoctype<'_> {
+    #[inline]
+    fn span_mut(&mut self) -> &mut Span {
+        &mut self.span
+    }
+}
+
+impl GetSpanMut for AstroComment<'_> {
     #[inline]
     fn span_mut(&mut self) -> &mut Span {
         &mut self.span

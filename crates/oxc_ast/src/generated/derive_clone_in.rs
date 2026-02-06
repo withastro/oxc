@@ -5647,6 +5647,7 @@ impl<'new_alloc> CloneIn<'new_alloc> for JSXChild<'_> {
             Self::Spread(it) => JSXChild::Spread(CloneIn::clone_in(it, allocator)),
             Self::AstroScript(it) => JSXChild::AstroScript(CloneIn::clone_in(it, allocator)),
             Self::AstroDoctype(it) => JSXChild::AstroDoctype(CloneIn::clone_in(it, allocator)),
+            Self::AstroComment(it) => JSXChild::AstroComment(CloneIn::clone_in(it, allocator)),
         }
     }
 
@@ -5670,6 +5671,9 @@ impl<'new_alloc> CloneIn<'new_alloc> for JSXChild<'_> {
             }
             Self::AstroDoctype(it) => {
                 JSXChild::AstroDoctype(CloneIn::clone_in_with_semantic_ids(it, allocator))
+            }
+            Self::AstroComment(it) => {
+                JSXChild::AstroComment(CloneIn::clone_in_with_semantic_ids(it, allocator))
             }
         }
     }
@@ -8096,6 +8100,24 @@ impl<'new_alloc> CloneIn<'new_alloc> for AstroDoctype<'_> {
 
     fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
         AstroDoctype {
+            span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
+            value: CloneIn::clone_in_with_semantic_ids(&self.value, allocator),
+        }
+    }
+}
+
+impl<'new_alloc> CloneIn<'new_alloc> for AstroComment<'_> {
+    type Cloned = AstroComment<'new_alloc>;
+
+    fn clone_in(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroComment {
+            span: CloneIn::clone_in(&self.span, allocator),
+            value: CloneIn::clone_in(&self.value, allocator),
+        }
+    }
+
+    fn clone_in_with_semantic_ids(&self, allocator: &'new_alloc Allocator) -> Self::Cloned {
+        AstroComment {
             span: CloneIn::clone_in_with_semantic_ids(&self.span, allocator),
             value: CloneIn::clone_in_with_semantic_ids(&self.value, allocator),
         }

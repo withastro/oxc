@@ -5,7 +5,7 @@
 
 use oxc_allocator::{Box, Vec};
 use oxc_ast::ast::*;
-use oxc_span::{Atom, Span};
+use oxc_span::{Atom, GetSpan, Span};
 
 use crate::{ParserImpl, lexer::Kind};
 
@@ -269,8 +269,11 @@ impl<'a> ParserImpl<'a> {
         self.ast.alloc_jsx_attribute(self.end_span(span), attr_name, value)
     }
 
-    /// Parse an Astro attribute value, which can include template literals.
-    /// e.g., `<Component attr=`hello ${value}` />`
+    /// Parse an Astro attribute value, which can include template literals and unquoted values.
+    /// Examples:
+    /// - `<Component attr=`hello ${value}` />` (template literal)
+    /// - `<div slot=name>` (unquoted value)
+    /// - `<meta charset=utf8>` (unquoted value)
     pub(crate) fn parse_astro_attribute_value(&mut self) -> JSXAttributeValue<'a> {
         match self.cur_kind() {
             // Template literals can be used directly as attribute values in Astro
@@ -282,6 +285,16 @@ impl<'a> ParserImpl<'a> {
                     .ast
                     .alloc_jsx_expression_container(self.end_span(span), JSXExpression::from(expr));
                 JSXAttributeValue::ExpressionContainer(expr_container)
+            }
+            // Unquoted attribute values in Astro (HTML-style)
+            // e.g., `slot=name`, `charset=utf8`
+            Kind::Ident => {
+                let span = self.start_span();
+                let value = Atom::from(self.cur_src());
+                self.bump_any();
+                // Convert unquoted identifier to string literal
+                let str_lit = self.ast.string_literal(self.end_span(span), value, None);
+                JSXAttributeValue::StringLiteral(self.alloc(str_lit))
             }
             // Fall back to standard JSX attribute value parsing
             _ => self.parse_jsx_attribute_value(),
@@ -380,6 +393,41 @@ impl<'a> ParserImpl<'a> {
         }
     }
 
+    /// Check if the element is a foreign content element where `{` is literal text.
+    ///
+    /// Per the HTML spec, `<math>` enters MathML namespace where `{` and `}` are
+    /// literal characters, not expression delimiters. The Go Astro compiler
+    /// implements this as `noExpressionTag` in its tokenizer.
+    ///
+    /// Note: `<svg>` does NOT disable expressions — SVG content in Astro can
+    /// contain `{expressions}` normally.
+    pub(crate) fn is_foreign_content_element(name: &JSXElementName<'a>) -> bool {
+        match name {
+            JSXElementName::Identifier(ident) => ident.name.as_str() == "math",
+            _ => false,
+        }
+    }
+
+    /// Check if attributes contain `is:raw` directive.
+    /// When present, the element's content should be treated as raw text.
+    /// Note: In Astro, `is:raw` is parsed as a single identifier string, not a namespaced name.
+    pub(crate) fn has_is_raw_attribute(attributes: &[JSXAttributeItem<'a>]) -> bool {
+        attributes.iter().any(|attr| {
+            if let JSXAttributeItem::Attribute(attr) = attr {
+                match &attr.name {
+                    // Astro parses `is:raw` as a single identifier
+                    JSXAttributeName::Identifier(ident) => ident.name.as_str() == "is:raw",
+                    // Standard JSX might parse it as namespace:name
+                    JSXAttributeName::NamespacedName(ns) => {
+                        ns.namespace.name.as_str() == "is" && ns.name.name.as_str() == "raw"
+                    }
+                }
+            } else {
+                false
+            }
+        })
+    }
+
     /// Parse a `<script>` element encountered inside JSX children (Astro-specific).
     ///
     /// This is similar to `parse_astro_script` in mod.rs but adapted for use within
@@ -393,24 +441,17 @@ impl<'a> ParserImpl<'a> {
         // We're at `script` identifier after `<`
         self.bump_any(); // skip `script`
 
-        // Check if there are any attributes (anything before `>` or `/>`)
-        let mut has_attributes = false;
-        let mut is_self_closing = false;
+        // Parse attributes using the standard JSX attribute parser
+        let attributes = self.parse_jsx_attributes();
+        let has_attributes = !attributes.is_empty();
 
-        // Look for attributes or closing
-        while !self.at(Kind::Eof) && !self.at(Kind::RAngle) {
-            if self.at(Kind::Slash) {
-                self.bump_any(); // skip `/`
-                if self.at(Kind::RAngle) {
-                    is_self_closing = true;
-                    break;
-                }
-            } else if self.at(Kind::Ident) || self.cur_kind().is_any_keyword() {
-                // Found an attribute
-                has_attributes = true;
-            }
-            self.bump_any();
-        }
+        // Check for self-closing `/>`
+        let is_self_closing = if self.at(Kind::Slash) {
+            self.bump_any(); // skip `/`
+            true
+        } else {
+            false
+        };
 
         if self.at(Kind::RAngle) {
             self.bump_any(); // skip `>`
@@ -430,7 +471,7 @@ impl<'a> ParserImpl<'a> {
                     script_span,
                     elem_name,
                     Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
-                    self.ast.vec(),
+                    attributes,
                 );
                 return JSXChild::Element(self.ast.alloc_jsx_element(
                     script_span,
@@ -460,7 +501,7 @@ impl<'a> ParserImpl<'a> {
                 script_span,
                 elem_name,
                 Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
-                self.ast.vec(),
+                attributes,
             );
             return JSXChild::Element(self.ast.alloc_jsx_element(
                 script_span,
@@ -507,7 +548,7 @@ impl<'a> ParserImpl<'a> {
                     oxc_span::Span::new(span, content_start as u32),
                     opening_elem_name,
                     Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
-                    self.ast.vec(),
+                    attributes,
                 );
 
                 // Closing element
@@ -560,7 +601,7 @@ impl<'a> ParserImpl<'a> {
                 oxc_span::Span::new(span, content_start as u32),
                 opening_elem_name,
                 Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
-                self.ast.vec(),
+                attributes,
             );
 
             // Create </script> closing element
@@ -612,8 +653,8 @@ impl<'a> ParserImpl<'a> {
         ))
     }
 
-    /// Skip the raw text content of a script or style element in Astro.
-    /// Returns an empty children vector since we don't parse the content as JSX.
+    /// Skip the raw text content of a raw text element (script, style, or is:raw) in Astro.
+    /// Returns the raw content as a JSXText child if there is any content.
     ///
     /// Note: This is called AFTER the opening element's `>` has been consumed,
     /// but BEFORE the lexer has advanced to parse JSX children.
@@ -623,12 +664,24 @@ impl<'a> ParserImpl<'a> {
         name: &JSXElementName<'a>,
         in_jsx_child: bool,
     ) -> Vec<'a, JSXChild<'a>> {
+        // Extract the tag name from various JSXElementName variants
         let tag_name = match name {
+            // Lowercase HTML elements: <div>, <style>, etc.
             JSXElementName::Identifier(ident) => ident.name.as_str(),
-            _ => return self.ast.vec(),
+            // Uppercase component references: <Component>, <Foo>, etc.
+            JSXElementName::IdentifierReference(ident_ref) => ident_ref.name.as_str(),
+            // Member expressions like <Foo.Bar> - use the full expression text
+            JSXElementName::MemberExpression(_) => {
+                // For member expressions, we need the full name like "Foo.Bar"
+                name.span().source_text(self.source_text)
+            }
+            // Namespaced names and ThisExpression are unlikely with is:raw, but handle them
+            JSXElementName::NamespacedName(_) | JSXElementName::ThisExpression(_) => {
+                name.span().source_text(self.source_text)
+            }
         };
 
-        // Build the closing tag pattern: </script> or </style>
+        // Build the closing tag pattern: </Component>, </div>, etc.
         let closing_tag = format!("</{tag_name}");
 
         // Start searching from after the `>` we just consumed
@@ -636,16 +689,28 @@ impl<'a> ParserImpl<'a> {
         if let Some(rest) = self.source_text.get(start_pos..)
             && let Some(end_pos) = rest.find(&closing_tag)
         {
-            // Move the lexer position to the closing tag
+            // Capture the raw content as text if there's any
             #[expect(clippy::cast_possible_truncation)]
-            let new_pos = (start_pos + end_pos) as u32;
-            self.lexer.set_position_for_astro(new_pos);
+            let content_end = (start_pos + end_pos) as u32;
+            let content_start = self.prev_token_end;
+
+            // Move the lexer position to the closing tag
+            self.lexer.set_position_for_astro(content_end);
             // Read the `<` token to prepare for parsing the closing element
             // Use next_jsx_child if in_jsx_child to maintain consistent lexer state
             if in_jsx_child {
                 self.token = self.lexer.next_jsx_child();
             } else {
                 self.token = self.lexer.next_token();
+            }
+
+            // If there's raw content, return it as a JSXText child
+            if content_end > content_start {
+                let span = Span::new(content_start, content_end);
+                let raw_text = span.source_text(self.source_text);
+                // For raw text, value and raw are the same (no escaping)
+                let jsx_text = self.ast.alloc_jsx_text(span, raw_text, Some(Atom::from(raw_text)));
+                return self.ast.vec1(JSXChild::Text(jsx_text));
             }
         }
 

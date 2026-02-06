@@ -1461,6 +1461,7 @@ impl GetSpan for JSXChild<'_> {
             Self::Spread(it) => GetSpan::span(&**it),
             Self::AstroScript(it) => GetSpan::span(&**it),
             Self::AstroDoctype(it) => GetSpan::span(&**it),
+            Self::AstroComment(it) => GetSpan::span(&**it),
         }
     }
 }
@@ -2205,6 +2206,13 @@ impl GetSpan for AstroScript<'_> {
 }
 
 impl GetSpan for AstroDoctype<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroComment<'_> {
     #[inline]
     fn span(&self) -> Span {
         self.span

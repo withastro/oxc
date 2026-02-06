@@ -109,3 +109,27 @@ pub struct AstroDoctype<'a> {
     /// The document type value, e.g., "html" from `<!doctype html>` or `<!DOCTYPE html>`
     pub value: Atom<'a>,
 }
+
+/// Astro HTML Comment
+///
+/// Represents an HTML comment `<!-- ... -->` in an Astro file.
+/// Unlike JavaScript comments which are trivia, HTML comments are preserved
+/// in the output and can appear in the rendered HTML.
+///
+/// ## Example
+///
+/// ```astro
+/// <div>
+///   <!-- This comment will appear in the HTML output -->
+///   <p>Content</p>
+/// </div>
+/// ```
+#[ast(visit)]
+#[derive(Debug)]
+#[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
+pub struct AstroComment<'a> {
+    /// Node location in source code (includes `<!--` and `-->`)
+    pub span: Span,
+    /// The comment content (without the `<!--` and `-->` delimiters)
+    pub value: Atom<'a>,
+}

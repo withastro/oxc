@@ -392,3 +392,5 @@ impl UnstableAddress for AstroFrontmatter<'_> {}
 impl UnstableAddress for AstroScript<'_> {}
 
 impl UnstableAddress for AstroDoctype<'_> {}
+
+impl UnstableAddress for AstroComment<'_> {}

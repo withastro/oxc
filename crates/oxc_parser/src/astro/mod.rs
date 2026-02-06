@@ -147,19 +147,22 @@ impl<'a> ParserImpl<'a> {
                 // Find `-->` to close the comment
                 if let Some(end_offset) = rest.find("-->") {
                     let comment_end = (start_pos + end_offset + 3) as u32;
+                    let comment_start = span; // `<` position
 
-                    // Add the HTML comment to trivia
-                    let comment_start = (start_pos - 1) as u32; // include the `<`
-                    self.lexer.trivia_builder.add_html_comment(
-                        comment_start,
-                        comment_end,
-                        self.source_text,
-                    );
+                    // Extract comment content (between `<!--` and `-->`)
+                    // rest starts with "!--", so content starts at index 3
+                    let content = &rest[3..end_offset];
+                    let value = oxc_span::Atom::from(content);
+
+                    // Create the AstroComment node
+                    let comment_span = oxc_span::Span::new(comment_start, comment_end);
+                    let comment = self.ast.alloc_astro_comment(comment_span, value);
 
                     // Move lexer position past the comment
                     self.lexer.set_position_for_astro(comment_end);
                     self.token = self.lexer.next_jsx_child();
-                    return None; // Comments are trivia, not AST nodes
+
+                    return Some(JSXChild::AstroComment(comment));
                 }
             } else {
                 // This is likely a doctype or other `<!...>` construct
@@ -225,24 +228,17 @@ impl<'a> ParserImpl<'a> {
         // Skip the `script` identifier
         self.bump_any();
 
-        // Check if there are any attributes (anything before `>` or `/>`)
-        let mut has_attributes = false;
-        let mut is_self_closing = false;
+        // Parse attributes using the standard JSX attribute parser
+        let attributes = self.parse_jsx_attributes();
+        let has_attributes = !attributes.is_empty();
 
-        // Look for attributes or closing
-        while !self.at(Kind::Eof) && !self.at(Kind::RAngle) {
-            if self.at(Kind::Slash) {
-                self.bump_any(); // skip `/`
-                if self.at(Kind::RAngle) {
-                    is_self_closing = true;
-                    break;
-                }
-            } else if self.at(Kind::Ident) || self.cur_kind().is_any_keyword() {
-                // Found an attribute
-                has_attributes = true;
-            }
-            self.bump_any();
-        }
+        // Check for self-closing `/>`
+        let is_self_closing = if self.at(Kind::Slash) {
+            self.bump_any(); // skip `/`
+            true
+        } else {
+            false
+        };
 
         if self.at(Kind::RAngle) {
             self.bump_any(); // skip `>`
@@ -263,7 +259,7 @@ impl<'a> ParserImpl<'a> {
                     script_span,
                     elem_name,
                     no_type_args,
-                    self.ast.vec(),
+                    attributes,
                 );
                 let no_closing: NoClosingElement<'a> = None;
                 return JSXChild::Element(self.ast.alloc_jsx_element(
@@ -295,7 +291,7 @@ impl<'a> ParserImpl<'a> {
                 script_span,
                 elem_name,
                 no_type_args,
-                self.ast.vec(),
+                attributes,
             );
             let no_closing: NoClosingElement<'a> = None;
             return JSXChild::Element(self.ast.alloc_jsx_element(
@@ -349,7 +345,7 @@ impl<'a> ParserImpl<'a> {
                     oxc_span::Span::new(span, content_start as u32),
                     opening_elem_name,
                     no_type_args,
-                    self.ast.vec(),
+                    attributes,
                 );
 
                 let closing_name = self
@@ -402,7 +398,7 @@ impl<'a> ParserImpl<'a> {
                 oxc_span::Span::new(span, content_start as u32),
                 opening_elem_name,
                 no_type_args,
-                self.ast.vec(),
+                attributes,
             );
 
             // Create </script> closing element
@@ -3858,5 +3854,130 @@ import { ViewTransitions } from 'astro:transitions';
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    // Test that `---` inside strings in frontmatter doesn't close the frontmatter.
+    // This is a regression test for incorrect fence detection.
+    #[test]
+    fn parse_astro_frontmatter_dashes_in_string() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // The string '--- message ---' contains `---` but should NOT end the frontmatter
+        let source = r"---
+export async function getStaticPaths() {
+  console.log('--- built product pages ---')
+  return [];
+}
+---
+<div>Hello</div>
+";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Check frontmatter has the function
+        assert!(ret.root.frontmatter.is_some());
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::ExportNamedDeclaration(_)));
+
+        // Check body has the div
+        assert!(!ret.root.body.is_empty());
+    }
+
+    // Test that HTML comments are preserved as AstroComment nodes
+    #[test]
+    fn parse_astro_html_comments_preserved() {
+        use oxc_ast::ast::JSXChild;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<!-- Global Metadata -->
+<meta charset="utf-8">
+<!-- Another comment -->
+<link rel="icon" href="/favicon.ico" />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Should have at least: comment, text, meta, text, comment, text, link
+        // That's 7 children (comments + elements + whitespace text nodes)
+        let comment_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
+
+        assert_eq!(comment_count, 2, "Expected 2 HTML comments in the output");
+    }
+
+    #[test]
+    fn parse_astro_math_foreign_content() {
+        // {2x} inside <math> should be literal text, not an expression
+        let source = r#"<math xmlns="http://www.w3.org/1998/Math/MathML"><msup><mi>R</mi><mrow><mn>2</mn><mi>x</mi></mrow></msup><annotation encoding="application/x-tex">R^{2x}</annotation></math>"#;
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // The math element should be parsed successfully with {2x} as text
+        assert!(!ret.root.body.is_empty(), "should have parsed content");
+    }
+
+    #[test]
+    fn parse_astro_math_simple_braces() {
+        // Simple {test} inside <math> should be text
+        let source = "<math>{test}</math>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Should have a <math> element
+        let math_el = ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)));
+        assert!(math_el.is_some(), "should have a <math> element");
+
+        // The content should be text children, not expression containers
+        if let Some(JSXChild::Element(el)) = math_el {
+            let has_expression =
+                el.children.iter().any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
+            assert!(!has_expression, "{{test}} inside <math> should be text, not an expression");
+        }
+    }
+
+    #[test]
+    fn parse_astro_math_nested_in_span() {
+        // <math> inside a <span> should still disable expressions
+        let source = r#"<span><math xmlns="http://www.w3.org/1998/Math/MathML"><annotation encoding="application/x-tex">\sqrt {x}</annotation></math></span>"#;
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn parse_astro_math_expression_attributes_still_work() {
+        // Expression attributes on <math> itself should still work
+        let source = r"<math set:html={test} />";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn parse_astro_svg_still_has_expressions() {
+        // SVG should still support expressions (unlike math)
+        let source = "<svg>{expr}</svg>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Should have an SVG element with an expression container child
+        if let Some(JSXChild::Element(el)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        {
+            let has_expression =
+                el.children.iter().any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
+            assert!(has_expression, "{{expr}} inside <svg> should be an expression, not text");
+        }
     }
 }

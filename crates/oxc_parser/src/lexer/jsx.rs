@@ -37,6 +37,13 @@ static JSX_CHILD_END_TABLE: SafeByteMatchTable =
 static ASTRO_TEXT_END_TABLE: SafeByteMatchTable =
     safe_byte_match_table!(|b| b == b'{' || b == b'}' || b == b'<');
 
+/// Text content inside foreign content elements like `<math>`.
+/// In foreign content, `{` and `}` are literal text, not expression delimiters.
+/// Only `<` stops text scanning (for child tags like `<mi>`, `<mo>`, etc.).
+#[cfg(feature = "astro")]
+static ASTRO_FOREIGN_TEXT_END_TABLE: SafeByteMatchTable =
+    safe_byte_match_table!(|b| b == b'<');
+
 /// `JSXDoubleStringCharacters` ::
 ///   `JSXDoubleStringCharacter` `JSXDoubleStringCharactersopt`
 /// `JSXDoubleStringCharacter` ::
@@ -118,19 +125,42 @@ impl Lexer<'_> {
                 Kind::LAngle
             }
             Some(b'{') => {
+                // In foreign content (e.g., <math>), `{` is literal text
+                #[cfg(feature = "astro")]
+                if self.no_expression_in_jsx_children {
+                    return self.read_jsx_child_foreign_text();
+                }
                 self.consume_char();
                 Kind::LCurly
             }
+            Some(b'}') if cfg!(feature = "astro") && self.no_expression_in_jsx_children => {
+                // In foreign content, `}` is also literal text
+                self.read_jsx_child_foreign_text()
+            }
             Some(_) => {
+                // In Astro mode inside foreign content (<math>), use the foreign text table
+                // that only stops at `<` and treats `{`/`}` as text.
+                #[cfg(feature = "astro")]
+                if self.source_type.is_astro() && self.no_expression_in_jsx_children {
+                    return self.read_jsx_child_foreign_text();
+                }
+
                 // In Astro mode, `>` is valid text content (unlike JSX where it's an error).
                 // Use a more permissive table that doesn't stop at `>`.
                 #[cfg(feature = "astro")]
                 if self.source_type.is_astro() {
+                    let text_start = self.offset();
                     let next_byte = byte_search! {
                         lexer: self,
                         table: ASTRO_TEXT_END_TABLE,
                         handle_eof: {
-                            return Kind::Eof;
+                            // In Astro, reaching EOF while scanning text means we have text content
+                            // Return JSXText if we actually scanned any text, otherwise Eof
+                            return if self.offset() > text_start {
+                                Kind::JSXText
+                            } else {
+                                Kind::Eof
+                            };
                         },
                     };
                     // `<` and `{` are valid stopping points (start of tag/expression)
@@ -210,6 +240,31 @@ impl Lexer<'_> {
         }
         // Either `{` or a valid tag start `<` - return JSXText
         Kind::JSXText
+    }
+
+    /// Read JSX child text inside foreign content (e.g., `<math>`).
+    /// `{` and `}` are treated as literal text. Only `<` stops scanning.
+    #[cfg(feature = "astro")]
+    fn read_jsx_child_foreign_text(&mut self) -> Kind {
+        let text_start = self.offset();
+        let _next_byte = byte_search! {
+            lexer: self,
+            table: ASTRO_FOREIGN_TEXT_END_TABLE,
+            handle_eof: {
+                return if self.offset() > text_start {
+                    Kind::JSXText
+                } else {
+                    Kind::Eof
+                };
+            },
+        };
+        // Only `<` can stop us. Check if we scanned any text.
+        if self.offset() > text_start {
+            Kind::JSXText
+        } else {
+            // We're right at a `<`, let the caller handle it
+            Kind::Eof
+        }
     }
 
     /// Expand the current `Ident` token for `JSXIdentifier`

@@ -9761,6 +9761,21 @@ impl<'a> AstBuilder<'a> {
         JSXChild::AstroDoctype(self.alloc_astro_doctype(span, value))
     }
 
+    /// Build a [`JSXChild::AstroComment`].
+    ///
+    /// This node contains an [`AstroComment`] that will be stored in the memory arena.
+    ///
+    /// ## Parameters
+    /// * `span`: Node location in source code (includes `<!--` and `-->`)
+    /// * `value`: The comment content (without the `<!--` and `-->` delimiters)
+    #[inline]
+    pub fn jsx_child_astro_comment<A1>(self, span: Span, value: A1) -> JSXChild<'a>
+    where
+        A1: Into<Atom<'a>>,
+    {
+        JSXChild::AstroComment(self.alloc_astro_comment(span, value))
+    }
+
     /// Build a [`JSXSpreadChild`].
     ///
     /// If you want the built node to be allocated in the memory arena,
@@ -15348,6 +15363,38 @@ impl<'a> AstBuilder<'a> {
         A1: Into<Atom<'a>>,
     {
         Box::new_in(self.astro_doctype(span, value), self.allocator)
+    }
+
+    /// Build an [`AstroComment`].
+    ///
+    /// If you want the built node to be allocated in the memory arena,
+    /// use [`AstBuilder::alloc_astro_comment`] instead.
+    ///
+    /// ## Parameters
+    /// * `span`: Node location in source code (includes `<!--` and `-->`)
+    /// * `value`: The comment content (without the `<!--` and `-->` delimiters)
+    #[inline]
+    pub fn astro_comment<A1>(self, span: Span, value: A1) -> AstroComment<'a>
+    where
+        A1: Into<Atom<'a>>,
+    {
+        AstroComment { span, value: value.into() }
+    }
+
+    /// Build an [`AstroComment`], and store it in the memory arena.
+    ///
+    /// Returns a [`Box`] containing the newly-allocated node.
+    /// If you want a stack-allocated node, use [`AstBuilder::astro_comment`] instead.
+    ///
+    /// ## Parameters
+    /// * `span`: Node location in source code (includes `<!--` and `-->`)
+    /// * `value`: The comment content (without the `<!--` and `-->` delimiters)
+    #[inline]
+    pub fn alloc_astro_comment<A1>(self, span: Span, value: A1) -> Box<'a, AstroComment<'a>>
+    where
+        A1: Into<Atom<'a>>,
+    {
+        Box::new_in(self.astro_comment(span, value), self.allocator)
     }
 }
 

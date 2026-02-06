@@ -120,6 +120,12 @@ impl<'a> FormatWrite<'a> for AstNode<'a, AstroDoctype<'a>> {
     }
 }
 
+impl<'a> FormatWrite<'a> for AstNode<'a, AstroComment<'a>> {
+    fn write(&self, _f: &mut Formatter<'_, 'a>) {
+        // TODO: Implement Astro formatting
+    }
+}
+
 impl<'a> FormatWrite<'a> for AstNode<'a, IdentifierName<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
         let text = text_without_whitespace(self.name().as_str());

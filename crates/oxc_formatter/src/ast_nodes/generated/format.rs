@@ -3760,6 +3760,16 @@ impl<'a> Format<'a> for AstNode<'a, JSXChild<'a>> {
                     })
                     .fmt(f);
             }
+            JSXChild::AstroComment(inner) => {
+                allocator
+                    .alloc(AstNode::<AstroComment> {
+                        inner,
+                        parent,
+                        allocator,
+                        following_span_start: self.following_span_start,
+                    })
+                    .fmt(f);
+            }
         }
     }
 }
@@ -5746,6 +5756,20 @@ impl<'a> Format<'a> for AstNode<'a, AstroDoctype<'a>> {
         if is_suppressed {
             FormatSuppressedNode(self.span()).fmt(f);
         } else {
+            self.write(f);
+        }
+        self.format_trailing_comments(f);
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, AstroComment<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        let is_suppressed = f.comments().is_suppressed(self.span().start);
+        self.format_leading_comments(f);
+        if is_suppressed {
+            FormatSuppressedNode(self.span()).fmt(f);
+        } else {
+        
             self.write(f);
         }
         self.format_trailing_comments(f);
