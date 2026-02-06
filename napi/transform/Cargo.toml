@@ -23,6 +23,7 @@ doctest = false
 
 [dependencies]
 oxc = { workspace = true, features = ["full"] }
+oxc_codegen = { workspace = true, optional = true }
 oxc_napi = { workspace = true }
 oxc_sourcemap = { workspace = true, features = ["napi"] }
 
@@ -53,3 +54,5 @@ napi-build = { workspace = true }
 [features]
 default = []
 allocator = ["dep:mimalloc-safe"]
+# Support for Astro file compilation (.astro)
+astro = ["oxc/astro", "oxc/codegen", "oxc_codegen/astro"]

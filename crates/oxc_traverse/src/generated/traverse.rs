@@ -3159,6 +3159,21 @@ pub trait Traverse<'a, State> {
     }
 
     #[inline]
+    fn enter_astro_comment(
+        &mut self,
+        node: &mut AstroComment<'a>,
+        ctx: &mut TraverseCtx<'a, State>,
+    ) {
+    }
+    #[inline]
+    fn exit_astro_comment(
+        &mut self,
+        node: &mut AstroComment<'a>,
+        ctx: &mut TraverseCtx<'a, State>,
+    ) {
+    }
+
+    #[inline]
     fn enter_statements(
         &mut self,
         node: &mut Vec<'a, Statement<'a>>,

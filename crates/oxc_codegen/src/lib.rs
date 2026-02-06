@@ -32,6 +32,9 @@ mod options;
 mod sourcemap_builder;
 mod str;
 
+#[cfg(feature = "astro")]
+pub mod astro;
+
 use binary_expr_visitor::BinaryExpressionVisitor;
 use comment::CommentsMap;
 use operator::Operator;

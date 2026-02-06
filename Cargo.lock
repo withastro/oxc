@@ -2423,6 +2423,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "oxc",
+ "oxc_codegen",
  "oxc_napi",
  "oxc_sourcemap",
  "rustc-hash",

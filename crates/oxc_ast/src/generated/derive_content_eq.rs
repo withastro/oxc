@@ -1725,6 +1725,7 @@ impl ContentEq for JSXChild<'_> {
             (Self::Spread(a), Self::Spread(b)) => a.content_eq(b),
             (Self::AstroScript(a), Self::AstroScript(b)) => a.content_eq(b),
             (Self::AstroDoctype(a), Self::AstroDoctype(b)) => a.content_eq(b),
+            (Self::AstroComment(a), Self::AstroComment(b)) => a.content_eq(b),
             _ => false,
         }
     }
@@ -2553,6 +2554,12 @@ impl ContentEq for AstroScript<'_> {
 }
 
 impl ContentEq for AstroDoctype<'_> {
+    fn content_eq(&self, other: &Self) -> bool {
+        ContentEq::content_eq(&self.value, &other.value)
+    }
+}
+
+impl ContentEq for AstroComment<'_> {
     fn content_eq(&self, other: &Self) -> bool {
         ContentEq::content_eq(&self.value, &other.value)
     }

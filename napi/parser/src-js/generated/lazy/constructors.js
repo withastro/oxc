@@ -7491,6 +7491,8 @@ function constructJSXChild(pos, ast) {
       return constructBoxAstroScript(pos + 8, ast);
     case 6:
       return constructBoxAstroDoctype(pos + 8, ast);
+    case 7:
+      return constructBoxAstroComment(pos + 8, ast);
     default:
       throw new Error(`Unexpected discriminant ${ast.buffer[pos]} for JSXChild`);
   }
@@ -11978,6 +11980,54 @@ export class AstroDoctype {
 
 const DebugAstroDoctype = class AstroDoctype {};
 
+export class AstroComment {
+  type = "AstroComment";
+  #internal;
+
+  constructor(pos, ast) {
+    if (ast?.token !== TOKEN) constructorError();
+
+    const { nodes } = ast;
+    const cached = nodes.get(pos);
+    if (cached !== void 0) return cached;
+
+    this.#internal = { pos, ast, $value: void 0 };
+    nodes.set(pos, this);
+  }
+
+  get start() {
+    const internal = this.#internal;
+    return constructU32(internal.pos, internal.ast);
+  }
+
+  get end() {
+    const internal = this.#internal;
+    return constructU32(internal.pos + 4, internal.ast);
+  }
+
+  get value() {
+    const internal = this.#internal,
+      cached = internal.$value;
+    if (cached !== void 0) return cached;
+    return (internal.$value = constructStr(internal.pos + 8, internal.ast));
+  }
+
+  toJSON() {
+    return {
+      type: "AstroComment",
+      start: this.start,
+      end: this.end,
+      value: this.value,
+    };
+  }
+
+  [inspectSymbol]() {
+    return Object.setPrototypeOf(this.toJSON(), DebugAstroComment.prototype);
+  }
+}
+
+const DebugAstroComment = class AstroComment {};
+
 export class NameSpan {
   #internal;
 
@@ -13675,6 +13725,10 @@ function constructBoxAstroScript(pos, ast) {
 
 function constructBoxAstroDoctype(pos, ast) {
   return new AstroDoctype(ast.buffer.uint32[pos >> 2], ast);
+}
+
+function constructBoxAstroComment(pos, ast) {
+  return new AstroComment(ast.buffer.uint32[pos >> 2], ast);
 }
 
 function constructVecTSEnumMember(pos, ast) {

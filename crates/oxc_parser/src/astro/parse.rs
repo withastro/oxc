@@ -58,18 +58,8 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
     // Content starts immediately after the opening `---`
     let content_start = opening_fence_start + 3;
 
-    // Find the closing `---` fence
-    // It can appear anywhere after the opening fence - doesn't need to be on its own line
-    // We need to find `---` that is NOT the opening fence
-    let search_area = &source_text[content_start..];
-
-    // Find the closing `---` - it can be:
-    // 1. On its own line (most common)
-    // 2. Immediately after content on same line
-    // 3. At the start of a line with content after it
-    //
-    // We look for `---` that marks the end of frontmatter
-    let closing_fence_pos = search_area.find("---")?;
+    // Find the closing `---` fence that is NOT inside a string, template literal, or comment
+    let closing_fence_pos = find_closing_fence(&source_text[content_start..])?;
 
     let content_end = content_start + closing_fence_pos;
     let frontmatter_end = content_end + 3;
@@ -84,6 +74,118 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
     }
 
     Some(AstroFrontmatterInfo { content_start, content_end, frontmatter_end, body_start })
+}
+
+/// Find the position of the closing `---` fence, skipping over strings, template literals, and comments.
+///
+/// This uses a simple state machine to track whether we're inside:
+/// - Single-quoted strings ('...')
+/// - Double-quoted strings ("...")
+/// - Template literals (`...`)
+/// - Line comments (// ...)
+/// - Block comments (/* ... */)
+///
+/// Returns the byte offset of the closing `---` in the search area, or None if not found.
+fn find_closing_fence(search_area: &str) -> Option<usize> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Normal,
+        SingleQuote,
+        DoubleQuote,
+        TemplateLiteral,
+        LineComment,
+        BlockComment,
+    }
+
+    let bytes = search_area.as_bytes();
+    let len = bytes.len();
+    let mut state = State::Normal;
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        match state {
+            State::Normal => {
+                // Check for `---` closing fence
+                if b == b'-' && i + 2 < len && bytes[i + 1] == b'-' && bytes[i + 2] == b'-' {
+                    return Some(i);
+                }
+
+                // Check for string/comment starts
+                match b {
+                    b'\'' => state = State::SingleQuote,
+                    b'"' => state = State::DoubleQuote,
+                    b'`' => state = State::TemplateLiteral,
+                    b'/' if i + 1 < len => {
+                        match bytes[i + 1] {
+                            b'/' => {
+                                state = State::LineComment;
+                                i += 1; // Skip the second '/'
+                            }
+                            b'*' => {
+                                state = State::BlockComment;
+                                i += 1; // Skip the '*'
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            State::SingleQuote => {
+                if b == b'\\' && i + 1 < len {
+                    // Skip escaped character
+                    i += 1;
+                } else if b == b'\'' {
+                    state = State::Normal;
+                }
+                // Note: newline ends single-quote string (syntax error in JS, but we continue)
+            }
+
+            State::DoubleQuote => {
+                if b == b'\\' && i + 1 < len {
+                    // Skip escaped character
+                    i += 1;
+                } else if b == b'"' {
+                    state = State::Normal;
+                }
+                // Note: newline ends double-quote string (syntax error in JS, but we continue)
+            }
+
+            State::TemplateLiteral => {
+                if b == b'\\' && i + 1 < len {
+                    // Skip escaped character
+                    i += 1;
+                } else if b == b'`' {
+                    state = State::Normal;
+                }
+                // Note: template literals CAN span multiple lines, so no newline handling
+                // We also don't track ${...} interpolations - `---` inside interpolation
+                // would be very rare and would likely be a syntax error anyway
+            }
+
+            State::LineComment => {
+                // Line comment ends at newline
+                if b == b'\n' {
+                    state = State::Normal;
+                }
+            }
+
+            State::BlockComment => {
+                // Block comment ends at */
+                if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                    state = State::Normal;
+                    i += 1; // Skip the '/'
+                }
+            }
+        }
+
+        i += 1;
+    }
+
+    None
 }
 
 /// Parse an Astro file.

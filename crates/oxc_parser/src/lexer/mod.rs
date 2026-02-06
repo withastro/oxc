@@ -96,6 +96,12 @@ pub struct Lexer<'a> {
 
     /// `memchr` Finder for end of multi-line comments. Created lazily when first used.
     multi_line_comment_end_finder: Option<memchr::memmem::Finder<'static>>,
+
+    /// When true, `{` and `}` inside JSX children are treated as text rather than
+    /// expression delimiters. This is set by the parser when inside foreign content
+    /// elements like `<math>` where `{` is literal text (e.g., `R^{2x}` in MathML).
+    #[cfg(feature = "astro")]
+    pub(crate) no_expression_in_jsx_children: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -125,6 +131,8 @@ impl<'a> Lexer<'a> {
             escaped_strings: FxHashMap::default(),
             escaped_templates: FxHashMap::default(),
             multi_line_comment_end_finder: None,
+            #[cfg(feature = "astro")]
+            no_expression_in_jsx_children: false,
         }
     }
 

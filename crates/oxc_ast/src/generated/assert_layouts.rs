@@ -1652,6 +1652,12 @@ const _: () = {
     assert!(align_of::<AstroDoctype>() == 8);
     assert!(offset_of!(AstroDoctype, span) == 0);
     assert!(offset_of!(AstroDoctype, value) == 8);
+
+    // Padding: 0 bytes
+    assert!(size_of::<AstroComment>() == 24);
+    assert!(align_of::<AstroComment>() == 8);
+    assert!(offset_of!(AstroComment, span) == 0);
+    assert!(offset_of!(AstroComment, value) == 8);
 };
 
 #[cfg(target_pointer_width = "32")]
@@ -3299,6 +3305,12 @@ const _: () = if cfg!(target_family = "wasm") || align_of::<u64>() == 8 {
     assert!(align_of::<AstroDoctype>() == 4);
     assert!(offset_of!(AstroDoctype, span) == 0);
     assert!(offset_of!(AstroDoctype, value) == 8);
+
+    // Padding: 0 bytes
+    assert!(size_of::<AstroComment>() == 16);
+    assert!(align_of::<AstroComment>() == 4);
+    assert!(offset_of!(AstroComment, span) == 0);
+    assert!(offset_of!(AstroComment, value) == 8);
 };
 
 #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]

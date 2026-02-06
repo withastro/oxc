@@ -1220,6 +1220,11 @@ pub trait Visit<'a>: Sized {
     }
 
     #[inline]
+    fn visit_astro_comment(&mut self, it: &AstroComment<'a>) {
+        walk_astro_comment(self, it);
+    }
+
+    #[inline]
     fn visit_span(&mut self, it: &Span) {
         walk_span(self, it);
     }
@@ -3192,6 +3197,7 @@ pub mod walk {
             JSXChild::Spread(it) => visitor.visit_jsx_spread_child(it),
             JSXChild::AstroScript(it) => visitor.visit_astro_script(it),
             JSXChild::AstroDoctype(it) => visitor.visit_astro_doctype(it),
+            JSXChild::AstroComment(it) => visitor.visit_astro_comment(it),
         }
     }
 
@@ -4288,6 +4294,14 @@ pub mod walk {
     #[inline]
     pub fn walk_astro_doctype<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroDoctype<'a>) {
         let kind = AstKind::AstroDoctype(visitor.alloc(it));
+        visitor.enter_node(kind);
+        visitor.visit_span(&it.span);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_comment<'a, V: Visit<'a>>(visitor: &mut V, it: &AstroComment<'a>) {
+        let kind = AstKind::AstroComment(visitor.alloc(it));
         visitor.enter_node(kind);
         visitor.visit_span(&it.span);
         visitor.leave_node(kind);

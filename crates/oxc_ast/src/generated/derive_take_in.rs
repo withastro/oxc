@@ -484,3 +484,5 @@ impl<'a> TakeIn<'a> for AstroFrontmatter<'a> {}
 impl<'a> TakeIn<'a> for AstroScript<'a> {}
 
 impl<'a> TakeIn<'a> for AstroDoctype<'a> {}
+
+impl<'a> TakeIn<'a> for AstroComment<'a> {}

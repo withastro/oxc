@@ -609,6 +609,7 @@ impl AstKind<'_> {
             Self::AstroFrontmatter(_) => "AstroFrontmatter".into(),
             Self::AstroScript(_) => "AstroScript".into(),
             Self::AstroDoctype(_) => "AstroDoctype".into(),
+            Self::AstroComment(_) => "AstroComment".into(),
         }
     }
 }

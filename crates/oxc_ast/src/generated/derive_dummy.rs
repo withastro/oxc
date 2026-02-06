@@ -2961,3 +2961,12 @@ impl<'a> Dummy<'a> for AstroDoctype<'a> {
         Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
     }
 }
+
+impl<'a> Dummy<'a> for AstroComment<'a> {
+    /// Create a dummy [`AstroComment`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
+    }
+}

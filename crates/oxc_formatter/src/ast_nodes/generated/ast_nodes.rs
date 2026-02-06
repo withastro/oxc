@@ -216,6 +216,7 @@ pub enum AstNodes<'a> {
     AstroFrontmatter(&'a AstNode<'a, AstroFrontmatter<'a>>),
     AstroScript(&'a AstNode<'a, AstroScript<'a>>),
     AstroDoctype(&'a AstNode<'a, AstroDoctype<'a>>),
+    AstroComment(&'a AstNode<'a, AstroComment<'a>>),
 }
 impl AstNodes<'_> {
     #[inline]
@@ -414,6 +415,7 @@ impl AstNodes<'_> {
             Self::AstroFrontmatter(n) => n.span(),
             Self::AstroScript(n) => n.span(),
             Self::AstroDoctype(n) => n.span(),
+            Self::AstroComment(n) => n.span(),
         }
     }
     #[inline]
@@ -612,6 +614,7 @@ impl AstNodes<'_> {
             Self::AstroFrontmatter(n) => n.parent(),
             Self::AstroScript(n) => n.parent(),
             Self::AstroDoctype(n) => n.parent(),
+            Self::AstroComment(n) => n.parent(),
         }
     }
     #[inline]
@@ -810,6 +813,7 @@ impl AstNodes<'_> {
             Self::AstroFrontmatter(_) => "AstroFrontmatter",
             Self::AstroScript(_) => "AstroScript",
             Self::AstroDoctype(_) => "AstroDoctype",
+            Self::AstroComment(_) => "AstroComment",
         }
     }
 }
@@ -6585,6 +6589,12 @@ impl<'a> AstNode<'a, JSXChild<'a>> {
                 allocator: self.allocator,
                 following_span_start: self.following_span_start,
             })),
+            JSXChild::AstroComment(s) => AstNodes::AstroComment(self.allocator.alloc(AstNode {
+                inner: s.as_ref(),
+                parent,
+                allocator: self.allocator,
+                following_span_start: self.following_span_start,
+            })),
         };
         self.allocator.alloc(node)
     }
@@ -9746,6 +9756,22 @@ impl<'a> AstNode<'a, AstroScript<'a>> {
 }
 
 impl<'a> AstNode<'a, AstroDoctype<'a>> {
+    #[inline]
+    pub fn value(&self) -> Atom<'a> {
+        self.inner.value
+    }
+
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_leading_comments(self.span()).fmt(f);
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span_start)
+            .fmt(f);
+    }
+}
+
+impl<'a> AstNode<'a, AstroComment<'a>> {
     #[inline]
     pub fn value(&self) -> Atom<'a> {
         self.inner.value

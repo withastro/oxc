@@ -10,7 +10,7 @@ use oxc_estree::ESTree;
 use oxc_span::{Atom, ContentEq, GetSpan, GetSpanMut, Span};
 
 use super::{
-    astro::{AstroDoctype, AstroScript},
+    astro::{AstroComment, AstroDoctype, AstroScript},
     inherit_variants,
     js::*,
     literal::*,
@@ -458,6 +458,9 @@ pub enum JSXChild<'a> {
     /// Astro doctype declaration like `<!doctype html>`
     /// This is only used in Astro files.
     AstroDoctype(Box<'a, AstroDoctype<'a>>) = 6,
+    /// Astro HTML comment like `<!-- comment -->`
+    /// This is only used in Astro files.
+    AstroComment(Box<'a, AstroComment<'a>>) = 7,
 }
 
 /// JSX Spread Child.
