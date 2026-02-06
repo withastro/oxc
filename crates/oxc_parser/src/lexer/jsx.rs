@@ -41,8 +41,7 @@ static ASTRO_TEXT_END_TABLE: SafeByteMatchTable =
 /// In foreign content, `{` and `}` are literal text, not expression delimiters.
 /// Only `<` stops text scanning (for child tags like `<mi>`, `<mo>`, etc.).
 #[cfg(feature = "astro")]
-static ASTRO_FOREIGN_TEXT_END_TABLE: SafeByteMatchTable =
-    safe_byte_match_table!(|b| b == b'<');
+static ASTRO_FOREIGN_TEXT_END_TABLE: SafeByteMatchTable = safe_byte_match_table!(|b| b == b'<');
 
 /// `JSXDoubleStringCharacters` ::
 ///   `JSXDoubleStringCharacter` `JSXDoubleStringCharactersopt`

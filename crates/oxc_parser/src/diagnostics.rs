@@ -49,6 +49,11 @@ pub fn overlong_source() -> OxcDiagnostic {
 }
 
 #[cold]
+pub fn file_appears_to_be_binary() -> OxcDiagnostic {
+    ts_error("1490", "File appears to be binary.")
+}
+
+#[cold]
 pub fn flow(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Flow is not supported").with_label(span)
 }
@@ -748,6 +753,14 @@ pub fn jsx_element_no_match(span: Span, span1: Span, name: &str) -> OxcDiagnosti
             span1.primary_label(format!("Expected `</{name}>`")),
             span.label("Opened here"),
         ])
+}
+
+#[cold]
+pub fn jsx_fragment_no_match(opening_span: Span, closing_span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Expected corresponding closing tag for JSX fragment.").with_labels([
+        closing_span.primary_label("Expected `</>`"),
+        opening_span.label("Opened here"),
+    ])
 }
 
 #[cold]

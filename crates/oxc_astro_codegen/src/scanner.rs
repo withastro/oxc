@@ -163,10 +163,8 @@ impl<'a> AstroScanner<'a> {
                         if (is_component || is_custom)
                             && !self.hydrated_components.iter().any(|c| c.name == name)
                         {
-                            self.hydrated_components.push(HydratedComponent {
-                                name,
-                                is_custom_element: is_custom,
-                            });
+                            self.hydrated_components
+                                .push(HydratedComponent { name, is_custom_element: is_custom });
                         }
                     }
                     break; // Only process first client:* directive
@@ -295,11 +293,7 @@ impl<'a> AstroScanner<'a> {
             let content: String = children
                 .iter()
                 .filter_map(|child| {
-                    if let JSXChild::Text(text) = child {
-                        Some(text.value.as_str())
-                    } else {
-                        None
-                    }
+                    if let JSXChild::Text(text) = child { Some(text.value.as_str()) } else { None }
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -368,9 +362,7 @@ pub fn get_jsx_element_name(name: &JSXElementName<'_>) -> String {
 fn get_jsx_member_expression_name(expr: &JSXMemberExpression<'_>) -> String {
     let object_name = match &expr.object {
         JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.to_string(),
-        JSXMemberExpressionObject::MemberExpression(inner) => {
-            get_jsx_member_expression_name(inner)
-        }
+        JSXMemberExpressionObject::MemberExpression(inner) => get_jsx_member_expression_name(inner),
         JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
     };
     format!("{object_name}.{}", expr.property.name)
@@ -386,9 +378,7 @@ pub fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> String {
 }
 
 pub fn is_component_name(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_ascii_uppercase())
-        || name.contains('.')
-        || name.contains(':')
+    name.starts_with(|c: char| c.is_ascii_uppercase()) || name.contains('.') || name.contains(':')
 }
 
 pub fn is_custom_element(name: &str) -> bool {

@@ -1,7 +1,7 @@
 use oxc_allocator::TakeIn;
 use oxc_ast::{NONE, ast::*};
 use oxc_semantic::{Reference, SymbolFlags};
-use oxc_span::SPAN;
+use oxc_span::{Ident, SPAN};
 use oxc_syntax::reference::ReferenceFlags;
 use oxc_traverse::Traverse;
 
@@ -109,7 +109,7 @@ impl<'a> TypeScriptModule<'a, '_> {
         {
             // No value reference, we will remove this declaration in `TypeScriptAnnotations`
             let scope_id = ctx.current_scope_id();
-            ctx.scoping_mut().remove_binding(scope_id, &decl.id.name);
+            ctx.scoping_mut().remove_binding(scope_id, decl.id.name);
             return None;
         }
 
@@ -153,7 +153,7 @@ impl<'a> TypeScriptModule<'a, '_> {
                     ctx.scoping().find_binding(ctx.current_scope_id(), "require");
                 let callee = ctx.create_ident_expr(
                     SPAN,
-                    Atom::from("require"),
+                    Ident::new_const("require"),
                     require_symbol_id,
                     ReferenceFlags::Read,
                 );

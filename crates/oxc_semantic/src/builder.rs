@@ -16,7 +16,7 @@ use oxc_cfg::{
     IterationInstructionKind, ReturnInstructionKind,
 };
 use oxc_diagnostics::OxcDiagnostic;
-use oxc_span::{Atom, SourceType, Span};
+use oxc_span::{Ident, IdentHashMap, SourceType, Span};
 use oxc_syntax::{
     node::{NodeFlags, NodeId},
     reference::{Reference, ReferenceFlags, ReferenceId},
@@ -84,7 +84,7 @@ pub struct SemanticBuilder<'a> {
     pub(crate) current_function_node_id: NodeId,
     pub(crate) module_instance_state_cache: FxHashMap<Address, ModuleInstanceState>,
     current_reference_flags: ReferenceFlags,
-    pub(crate) hoisting_variables: FxHashMap<ScopeId, FxHashMap<Atom<'a>, SymbolId>>,
+    pub(crate) hoisting_variables: FxHashMap<ScopeId, IdentHashMap<'a, SymbolId>>,
 
     // builders
     pub(crate) nodes: AstNodes<'a>,
@@ -276,9 +276,8 @@ impl<'a> SemanticBuilder<'a> {
         }
 
         debug_assert_eq!(self.unresolved_references.scope_depth(), 1);
-        self.scoping.set_root_unresolved_references(
-            self.unresolved_references.into_root().into_iter().map(|(k, v)| (k.as_str(), v)),
-        );
+        self.scoping
+            .set_root_unresolved_references(self.unresolved_references.into_root().into_iter());
 
         #[cfg(feature = "linter")]
         let jsdoc = self.jsdoc.build();
@@ -401,12 +400,14 @@ impl<'a> SemanticBuilder<'a> {
     pub(crate) fn declare_symbol_on_scope(
         &mut self,
         span: Span,
-        name: &str,
+        name: Ident<'a>,
         scope_id: ScopeId,
         includes: SymbolFlags,
         excludes: SymbolFlags,
     ) -> SymbolId {
-        if let Some(symbol_id) = self.check_redeclaration(scope_id, span, name, excludes, true) {
+        if let Some(symbol_id) =
+            self.check_redeclaration(scope_id, span, name.as_str(), excludes, true)
+        {
             self.add_redeclare_variable(symbol_id, includes, span);
             self.scoping.union_symbol_flag(symbol_id, includes);
             return symbol_id;
@@ -423,7 +424,7 @@ impl<'a> SemanticBuilder<'a> {
     pub(crate) fn declare_symbol(
         &mut self,
         span: Span,
-        name: &str,
+        name: Ident<'a>,
         includes: SymbolFlags,
         excludes: SymbolFlags,
     ) -> SymbolId {
@@ -476,9 +477,10 @@ impl<'a> SemanticBuilder<'a> {
     /// Declare an unresolved reference in the current scope.
     ///
     /// # Panics
+    #[inline]
     pub(crate) fn declare_reference(
         &mut self,
-        name: Atom<'a>,
+        name: Ident<'a>,
         reference: Reference,
     ) -> ReferenceId {
         let reference_id = self.scoping.create_reference(reference);
@@ -490,7 +492,7 @@ impl<'a> SemanticBuilder<'a> {
     /// Declares a `Symbol` for the node, shadowing previous declarations in the same scope.
     pub(crate) fn declare_shadow_symbol(
         &mut self,
-        name: &str,
+        name: Ident<'a>,
         span: Span,
         scope_id: ScopeId,
         includes: SymbolFlags,
@@ -512,6 +514,28 @@ impl<'a> SemanticBuilder<'a> {
     /// This gets called every time [`SemanticBuilder`] exits a scope.
     pub(crate) fn resolve_references_for_current_scope(&mut self) {
         let (current_refs, parent_refs) = self.unresolved_references.current_and_parent_mut();
+
+        if current_refs.is_empty() {
+            return;
+        }
+
+        // Fast path: scope has no bindings — skip resolution, just merge to parent.
+        // Many scopes (if-blocks, try-blocks, loop bodies without `let`) have no bindings,
+        // so all unresolved references just bubble up unchanged.
+        if self.scoping.get_bindings(self.current_scope_id).is_empty() {
+            // Union by size: swap so we drain the smaller map into the larger one.
+            if current_refs.len() > parent_refs.len() {
+                mem::swap(current_refs, parent_refs);
+            }
+            for (name, references) in current_refs.drain() {
+                if let Some(parent_reference_ids) = parent_refs.get_mut(&name) {
+                    parent_reference_ids.extend(references);
+                } else {
+                    parent_refs.insert(name, references);
+                }
+            }
+            return;
+        }
 
         for (name, mut references) in current_refs.drain() {
             // Try to resolve a reference.
@@ -2263,6 +2287,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         self.enter_node(kind);
         param.bind(self);
         self.visit_span(&param.span);
+        self.visit_decorators(&param.decorators);
         self.visit_binding_rest_element(&param.rest);
         if let Some(type_annotation) = &param.type_annotation {
             self.visit_ts_type_annotation(type_annotation);
@@ -2520,10 +2545,11 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 }
 
 impl<'a> SemanticBuilder<'a> {
+    #[inline]
     fn reference_identifier(&mut self, ident: &IdentifierReference<'a>) {
         let flags = self.resolve_reference_usages();
         let reference = Reference::new(self.current_node_id, self.current_scope_id, flags);
-        let reference_id = self.declare_reference(ident.name.into(), reference);
+        let reference_id = self.declare_reference(ident.name, reference);
         ident.reference_id.set(Some(reference_id));
     }
 

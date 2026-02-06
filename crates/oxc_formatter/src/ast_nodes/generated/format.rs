@@ -5769,7 +5769,6 @@ impl<'a> Format<'a> for AstNode<'a, AstroComment<'a>> {
         if is_suppressed {
             FormatSuppressedNode(self.span()).fmt(f);
         } else {
-        
             self.write(f);
         }
         self.format_trailing_comments(f);

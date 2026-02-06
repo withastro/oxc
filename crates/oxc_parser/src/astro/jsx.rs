@@ -716,4 +716,42 @@ impl<'a> ParserImpl<'a> {
 
         self.ast.vec()
     }
+
+    /// Parse HTML comment in JSX (Astro-specific).
+    /// HTML comments (`<!-- ... -->`) are represented as `AstroComment` AST nodes.
+    /// Returns `Some(JSXChild::AstroComment)` on success, or `None` if not a valid HTML comment.
+    #[expect(clippy::cast_possible_truncation)]
+    pub(crate) fn parse_html_comment_in_jsx(&mut self, span: u32) -> Option<JSXChild<'a>> {
+        // We're at `!` after `<`
+        let start_pos = self.prev_token_end as usize;
+
+        // Check if this is an HTML comment `<!--`
+        if let Some(rest) = self.source_text.get(start_pos..)
+            && rest.starts_with("!--")
+        {
+            // Find `-->` to close the comment
+            if let Some(end_offset) = rest.find("-->") {
+                let comment_end = (start_pos + end_offset + 3) as u32;
+                let comment_start = span; // `<` position
+
+                // Extract comment content (between `<!--` and `-->`)
+                // rest starts with "!--", so content starts at index 3
+                let content = &rest[3..end_offset];
+                let value = oxc_span::Atom::from(content);
+
+                // Create the AstroComment node
+                let comment_span = oxc_span::Span::new(comment_start, comment_end);
+                let comment = self.ast.alloc_astro_comment(comment_span, value);
+
+                // Move lexer position past the comment
+                self.lexer.set_position_for_astro(comment_end);
+                self.token = self.lexer.next_jsx_child();
+
+                return Some(JSXChild::AstroComment(comment));
+            }
+        }
+
+        // Not a valid HTML comment
+        None
+    }
 }

@@ -302,6 +302,7 @@ const GENERATORS: &[&(dyn Generator + Sync)] = &[
     &generators::TypescriptGenerator,
     &generators::FormatterFormatGenerator,
     &generators::FormatterAstNodesGenerator,
+    &generators::TraverseGenerator,
 ];
 
 /// Attributes on structs and enums (not including those defined by derives/generators)

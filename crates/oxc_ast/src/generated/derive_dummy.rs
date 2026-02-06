@@ -1117,6 +1117,7 @@ impl<'a> Dummy<'a> for FormalParameterRest<'a> {
     fn dummy(allocator: &'a Allocator) -> Self {
         Self {
             span: Dummy::dummy(allocator),
+            decorators: Dummy::dummy(allocator),
             rest: Dummy::dummy(allocator),
             type_annotation: Dummy::dummy(allocator),
         }

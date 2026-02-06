@@ -4,7 +4,7 @@ use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::Visit;
 use oxc_semantic::{NodeId, Reference, Scoping};
-use oxc_span::SPAN;
+use oxc_span::{Ident, SPAN};
 use oxc_syntax::{
     reference::{ReferenceFlags, ReferenceId},
     scope::{ScopeFlags, ScopeId},
@@ -236,6 +236,7 @@ impl<'a> TraverseScoping<'a> {
         scope_id: ScopeId,
         flags: SymbolFlags,
     ) -> SymbolId {
+        let name = Ident::from(name);
         let symbol_id = self.scoping.create_symbol(SPAN, name, flags, scope_id, NodeId::DUMMY);
         self.scoping.add_binding(scope_id, name, symbol_id);
 
@@ -247,7 +248,7 @@ impl<'a> TraverseScoping<'a> {
     /// Creates a symbol with the provided name and flags and adds it to the specified scope.
     pub fn generate_binding(
         &mut self,
-        name: Atom<'a>,
+        name: Ident<'a>,
         scope_id: ScopeId,
         flags: SymbolFlags,
     ) -> BoundIdentifier<'a> {
@@ -260,7 +261,7 @@ impl<'a> TraverseScoping<'a> {
     /// Creates a symbol with the provided name and flags and adds it to the current scope.
     pub fn generate_binding_in_current_scope(
         &mut self,
-        name: Atom<'a>,
+        name: Ident<'a>,
         flags: SymbolFlags,
     ) -> BoundIdentifier<'a> {
         self.generate_binding(name, self.current_scope_id, flags)
@@ -275,7 +276,7 @@ impl<'a> TraverseScoping<'a> {
     /// starting with a digit (0-9) is fine.
     ///
     /// See comments on `UidGenerator` for further details.
-    pub fn generate_uid_name(&mut self, name: &str, allocator: &'a Allocator) -> Atom<'a> {
+    pub fn generate_uid_name(&mut self, name: &str, allocator: &'a Allocator) -> Ident<'a> {
         // If `uid_generator` is not already populated, initialize it
         let uid_generator =
             self.uid_generator.get_or_insert_with(|| UidGenerator::new(&self.scoping, allocator));
@@ -300,7 +301,7 @@ impl<'a> TraverseScoping<'a> {
     pub fn create_unbound_reference(&mut self, name: &str, flags: ReferenceFlags) -> ReferenceId {
         let reference = Reference::new(NodeId::DUMMY, self.current_scope_id, flags);
         let reference_id = self.scoping.create_reference(reference);
-        self.scoping.add_root_unresolved_reference(name, reference_id);
+        self.scoping.add_root_unresolved_reference(Ident::from(name), reference_id);
         reference_id
     }
 
@@ -339,7 +340,7 @@ impl<'a> TraverseScoping<'a> {
         if let Some(symbol_id) = symbol_id {
             self.scoping.delete_resolved_reference(symbol_id, reference_id);
         } else {
-            self.scoping.delete_root_unresolved_reference(name, reference_id);
+            self.scoping.delete_root_unresolved_reference(Ident::from(name), reference_id);
         }
     }
 

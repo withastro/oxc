@@ -2368,9 +2368,11 @@ name = "oxc_str"
 version = "0.112.0"
 dependencies = [
  "compact_str",
+ "hashbrown 0.16.1",
  "oxc-schemars",
  "oxc_allocator",
  "oxc_estree",
+ "rustc-hash",
  "serde",
 ]
 
@@ -2529,6 +2531,7 @@ dependencies = [
  "oxc_ecmascript",
  "oxc_semantic",
  "oxc_span",
+ "oxc_str",
  "oxc_syntax",
  "rustc-hash",
 ]
@@ -2560,6 +2563,7 @@ dependencies = [
  "oxc_span",
  "phf",
  "rayon",
+ "rustc-hash",
  "serde",
  "serde_json",
  "simdutf8",
@@ -3776,15 +3780,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vscode_docs"
-version = "0.0.0"
-dependencies = [
- "cow-utils",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "vsimd"

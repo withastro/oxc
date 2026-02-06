@@ -8,7 +8,7 @@ use oxc_ast::{AstKind, Comment, ast::*};
 use oxc_ast_visit::Visit;
 #[cfg(feature = "cfg")]
 use oxc_cfg::{ControlFlowGraphBuilder, ErrorEdgeKind};
-use oxc_span::{Atom, SourceType};
+use oxc_span::{Ident, SourceType};
 use oxc_syntax::{reference::ReferenceFlags, scope::ScopeFlags};
 
 #[cfg(feature = "linter")]
@@ -105,9 +105,8 @@ impl<'a> SemanticBuilderAstroExt<'a> for SemanticBuilder<'a> {
         astro_visit_frontmatter_with_body(&mut self, frontmatter, &root.body);
 
         debug_assert_eq!(self.unresolved_references.scope_depth(), 1);
-        self.scoping.set_root_unresolved_references(
-            self.unresolved_references.into_root().into_iter().map(|(k, v)| (k.as_str(), v)),
-        );
+        self.scoping
+            .set_root_unresolved_references(self.unresolved_references.into_root().into_iter());
 
         #[cfg(feature = "linter")]
         let jsdoc = self.jsdoc.build();
@@ -199,7 +198,7 @@ fn astro_finish_root_program(builder: &mut SemanticBuilder<'_>) {
 /// and cannot access frontmatter variables.
 fn resolve_references_for_astro_script(builder: &mut SemanticBuilder<'_>) {
     let current_refs = builder.unresolved_references.current_mut();
-    let mut unresolved_for_root: Vec<(Atom<'_>, crate::unresolved_stack::ReferenceIds)> =
+    let mut unresolved_for_root: Vec<(Ident<'_>, crate::unresolved_stack::ReferenceIds)> =
         Vec::new();
 
     for (name, mut references) in current_refs.drain() {

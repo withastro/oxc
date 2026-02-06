@@ -12,9 +12,9 @@ use oxc_codegen::{Codegen, Context, Gen, GenExpr};
 
 use crate::TransformOptions;
 use crate::scanner::{
-    AstroScanner, HoistedScript, HoistedScriptType as InternalHoistedScriptType,
-    HydratedComponent, ScanResult, get_jsx_attribute_name, get_jsx_element_name,
-    is_component_name, is_custom_element, should_hoist_script,
+    AstroScanner, HoistedScript, HoistedScriptType as InternalHoistedScriptType, HydratedComponent,
+    ScanResult, get_jsx_attribute_name, get_jsx_element_name, is_component_name, is_custom_element,
+    should_hoist_script,
 };
 
 /// Runtime function names used in generated code.
@@ -178,11 +178,7 @@ struct ComponentImportInfo {
 
 impl<'a> AstroCodegen<'a> {
     /// Create a new Astro codegen instance.
-    pub fn new(
-        allocator: &'a Allocator,
-        source_text: &'a str,
-        options: TransformOptions,
-    ) -> Self {
+    pub fn new(allocator: &'a Allocator, source_text: &'a str, options: TransformOptions) -> Self {
         // Compute base hash for the source file (similar to Go compiler's HashString)
         let source_hash = Self::compute_source_hash(source_text);
 
@@ -3149,9 +3145,8 @@ mod tests {
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(ret.errors.is_empty(), "Parse errors: {:?}", ret.errors);
 
-        let options = TransformOptions::new()
-            .with_internal_url("http://localhost:3000/")
-            .with_metadata(true);
+        let options =
+            TransformOptions::new().with_internal_url("http://localhost:3000/").with_metadata(true);
 
         let codegen = AstroCodegen::new(&allocator, source, options);
         codegen.build(&ret.root).code

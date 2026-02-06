@@ -2,75 +2,75 @@
 /* eslint-disable */
 
 export interface ErrorLabel {
-  message: string | null
-  start: number
-  end: number
+  message: string | null;
+  start: number;
+  end: number;
 }
 
 export interface OxcError {
-  severity: Severity
-  message: string
-  labels: Array<ErrorLabel>
-  helpMessage: string | null
-  codeframe: string | null
+  severity: Severity;
+  message: string;
+  labels: Array<ErrorLabel>;
+  helpMessage: string | null;
+  codeframe: string | null;
 }
 
 export declare const enum Severity {
-  Error = 'Error',
-  Warning = 'Warning',
-  Advice = 'Advice'
+  Error = "Error",
+  Warning = "Warning",
+  Advice = "Advice",
 }
 
 /** A hoisted script extracted from an Astro component. */
 export interface NapiHoistedScript {
   /** The script type: `"inline"` or `"external"`. */
-  type: string
+  type: string;
   /** The inline script code (when type is `"inline"`). */
-  code?: string
+  code?: string;
   /** The external script src URL (when type is `"external"`). */
-  src?: string
+  src?: string;
 }
 
 /** A hydrated component reference found in the template. */
 export interface NapiHydratedComponent {
   /** The export name from the module (e.g., `"default"`). */
-  exportName: string
+  exportName: string;
   /** The local variable name used in the component. */
-  localName: string
+  localName: string;
   /** The import specifier (e.g., `"../components/Counter.jsx"`). */
-  specifier: string
+  specifier: string;
   /** The resolved path (empty string if unresolved). */
-  resolvedPath: string
+  resolvedPath: string;
 }
 
 /** Result of compiling an Astro file. */
 export declare class AstroCompileResult {
   /** The generated JavaScript code. */
-  get code(): string
+  get code(): string;
   /** Source map JSON string (empty until sourcemap support is implemented). */
-  get map(): string
+  get map(): string;
   /** CSS scope hash for the component. */
-  get scope(): string
+  get scope(): string;
   /** Extracted CSS from `<style>` tags (empty until CSS support). */
-  get css(): string[]
+  get css(): string[];
   /** Hoisted scripts extracted from the template. */
-  get scripts(): NapiHoistedScript[]
+  get scripts(): NapiHoistedScript[];
   /** Components with `client:*` hydration directives (except `client:only`). */
-  get hydratedComponents(): NapiHydratedComponent[]
+  get hydratedComponents(): NapiHydratedComponent[];
   /** Components with `client:only` directive. */
-  get clientOnlyComponents(): NapiHydratedComponent[]
+  get clientOnlyComponents(): NapiHydratedComponent[];
   /** Server components (stub: always empty). */
-  get serverComponents(): NapiHydratedComponent[]
+  get serverComponents(): NapiHydratedComponent[];
   /** Whether the template contains an explicit `<head>` element. */
-  get containsHead(): boolean
+  get containsHead(): boolean;
   /** Whether the component propagates head content. */
-  get propagation(): boolean
+  get propagation(): boolean;
   /** Style processing errors (stub: always empty). */
-  get styleError(): string[]
+  get styleError(): string[];
   /** Diagnostic messages (stub: always empty). */
-  get diagnostics(): string[]
+  get diagnostics(): string[];
   /** Any compilation errors encountered (oxc-specific). */
-  get errors(): Array<OxcError>
+  get errors(): Array<OxcError>;
 }
 
 /**
@@ -84,75 +84,75 @@ export interface AstroCompileOptions {
    * The filename of the Astro component being compiled.
    * Used in the `$$createComponent` call for debugging.
    */
-  filename?: string
+  filename?: string;
   /**
    * A normalized version of the filename used for scope hash generation.
    * If not provided, falls back to `filename`.
    */
-  normalizedFilename?: string
+  normalizedFilename?: string;
   /**
    * The import specifier for Astro runtime functions.
    * Defaults to `"astro/runtime/server/index.js"`.
    */
-  internalUrl?: string
+  internalUrl?: string;
   /**
    * Whether to generate a source map.
    * **Stub**: not yet implemented.
    *
    * @default false
    */
-  sourcemap?: boolean
+  sourcemap?: boolean;
   /**
    * Arguments passed to `$$createAstro` when the Astro global is used.
    * Defaults to `"https://astro.build"`.
    */
-  astroGlobalArgs?: string
+  astroGlobalArgs?: string;
   /**
    * Whether to collapse whitespace in the HTML output.
    * **Stub**: not yet implemented.
    *
    * @default false
    */
-  compact?: boolean
+  compact?: boolean;
   /**
    * Enable scoped slot result handling.
    * **Stub**: not yet implemented.
    *
    * @default false
    */
-  resultScopedSlot?: boolean
+  resultScopedSlot?: boolean;
   /**
    * Strategy for CSS scoping: `"where"`, `"class"`, or `"attribute"`.
    * **Stub**: not yet implemented.
    *
    * @default "where"
    */
-  scopedStyleStrategy?: 'where' | 'class' | 'attribute'
+  scopedStyleStrategy?: "where" | "class" | "attribute";
   /**
    * URL for the view transitions animation CSS.
    * **Stub**: not yet implemented.
    */
-  transitionsAnimationUrl?: string
+  transitionsAnimationUrl?: string;
   /**
    * Whether to annotate generated code with the source file path.
    * **Stub**: not yet implemented.
    *
    * @default false
    */
-  annotateSourceFile?: boolean
+  annotateSourceFile?: boolean;
   /**
    * Whether to render processed script tags using `$$renderScript`.
    *
    * @default false
    */
-  renderScript?: boolean
+  renderScript?: boolean;
   /**
    * Enable experimental script ordering behavior.
    * **Stub**: not yet implemented.
    *
    * @default false
    */
-  experimentalScriptOrder?: boolean
+  experimentalScriptOrder?: boolean;
   /**
    * Whether to include the `$$metadata` export.
    * The Go compiler always includes metadata; this option lets you skip it.
@@ -160,7 +160,7 @@ export interface AstroCompileOptions {
    *
    * @default false
    */
-  includeMetadata?: boolean
+  includeMetadata?: boolean;
   /**
    * Whether to strip HTML comments from component slot children.
    * Matches the official Astro compiler behavior by default.
@@ -168,7 +168,7 @@ export interface AstroCompileOptions {
    *
    * @default true
    */
-  stripSlotComments?: boolean
+  stripSlotComments?: boolean;
 }
 
 /**
@@ -196,7 +196,10 @@ export interface AstroCompileOptions {
  * console.log(result.code); // Generated JavaScript
  * ```
  */
-export declare function compileAstro(sourceText: string, options?: AstroCompileOptions | undefined | null): Promise<AstroCompileResult>
+export declare function compileAstro(
+  sourceText: string,
+  options?: AstroCompileOptions | undefined | null,
+): Promise<AstroCompileResult>;
 
 /**
  * Compile Astro file to JavaScript synchronously on current thread.
@@ -219,4 +222,7 @@ export declare function compileAstro(sourceText: string, options?: AstroCompileO
  * console.log(result.code); // Generated JavaScript
  * ```
  */
-export declare function compileAstroSync(sourceText: string, options?: AstroCompileOptions | undefined | null): AstroCompileResult
+export declare function compileAstroSync(
+  sourceText: string,
+  options?: AstroCompileOptions | undefined | null,
+): AstroCompileResult;

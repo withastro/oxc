@@ -334,8 +334,8 @@ working directory: fixtures/report_unused_directives
  37 | </script>
     `----
 
-Found 39 warnings and 0 errors.
-Finished in <variable>ms on 5 files with 92 rules using 1 threads.
+Found 38 warnings and 0 errors.
+Finished in <variable>ms on 5 files with 94 rules using 1 threads.
 ----------
 CLI result: LintSucceeded
 ----------

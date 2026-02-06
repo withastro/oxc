@@ -53,7 +53,7 @@ const name = "World";
   });
 
   it("handles MathML content", () => {
-    const result = compileAstroSync('<math><annotation>R^{2x}</annotation></math>');
+    const result = compileAstroSync("<math><annotation>R^{2x}</annotation></math>");
     expect(result.errors).toEqual([]);
     expect(result.code).toContain("R^{2x}");
   });
@@ -77,7 +77,9 @@ const name = "World";
   });
 
   it("detects explicit <head> element", () => {
-    const result = compileAstroSync("<html><head><title>Test</title></head><body><h1>Hi</h1></body></html>");
+    const result = compileAstroSync(
+      "<html><head><title>Test</title></head><body><h1>Hi</h1></body></html>",
+    );
     expect(result.errors).toEqual([]);
     expect(result.containsHead).toBe(true);
   });
