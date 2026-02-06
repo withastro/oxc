@@ -31,7 +31,6 @@ cow-utils = { workspace = true }
 rustc-hash = { workspace = true }
 
 [dev-dependencies]
-insta = { workspace = true }
+insta = { workspace = true, features = ["glob"] }
 oxc_parser = { workspace = true, features = ["astro"] }
 oxc_span = { workspace = true }
-pico-args = { workspace = true }
