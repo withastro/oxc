@@ -21,41 +21,150 @@ export declare const enum Severity {
   Advice = 'Advice'
 }
 
+/** A hoisted script extracted from an Astro component. */
+export interface NapiHoistedScript {
+  /** The script type: `"inline"` or `"external"`. */
+  type: string
+  /** The inline script code (when type is `"inline"`). */
+  code?: string
+  /** The external script src URL (when type is `"external"`). */
+  src?: string
+}
+
+/** A hydrated component reference found in the template. */
+export interface NapiHydratedComponent {
+  /** The export name from the module (e.g., `"default"`). */
+  exportName: string
+  /** The local variable name used in the component. */
+  localName: string
+  /** The import specifier (e.g., `"../components/Counter.jsx"`). */
+  specifier: string
+  /** The resolved path (empty string if unresolved). */
+  resolvedPath: string
+}
+
 /** Result of compiling an Astro file. */
 export declare class AstroCompileResult {
   /** The generated JavaScript code. */
   get code(): string
-  /** Any compilation errors encountered. */
+  /** Source map JSON string (empty until sourcemap support is implemented). */
+  get map(): string
+  /** CSS scope hash for the component. */
+  get scope(): string
+  /** Extracted CSS from `<style>` tags (empty until CSS support). */
+  get css(): string[]
+  /** Hoisted scripts extracted from the template. */
+  get scripts(): NapiHoistedScript[]
+  /** Components with `client:*` hydration directives (except `client:only`). */
+  get hydratedComponents(): NapiHydratedComponent[]
+  /** Components with `client:only` directive. */
+  get clientOnlyComponents(): NapiHydratedComponent[]
+  /** Server components (stub: always empty). */
+  get serverComponents(): NapiHydratedComponent[]
+  /** Whether the template contains an explicit `<head>` element. */
+  get containsHead(): boolean
+  /** Whether the component propagates head content. */
+  get propagation(): boolean
+  /** Style processing errors (stub: always empty). */
+  get styleError(): string[]
+  /** Diagnostic messages (stub: always empty). */
+  get diagnostics(): string[]
+  /** Any compilation errors encountered (oxc-specific). */
   get errors(): Array<OxcError>
 }
 
-/** Options for compiling Astro files to JavaScript. */
+/**
+ * Options for compiling Astro files to JavaScript.
+ *
+ * Matches the Go compiler's `TransformOptions` from `@astrojs/compiler`.
+ * Fields marked as stubs are accepted for API compatibility but not yet functional.
+ */
 export interface AstroCompileOptions {
-  /**
-   * The import specifier for Astro runtime functions.
-   * Defaults to `"astro/runtime/server/index.js"`.
-   */
-  internalUrl?: string
   /**
    * The filename of the Astro component being compiled.
    * Used in the `$$createComponent` call for debugging.
    */
   filename?: string
   /**
-   * Whether to include the `$$metadata` export.
-   * This is used for hydration and module tracking.
+   * A normalized version of the filename used for scope hash generation.
+   * If not provided, falls back to `filename`.
+   */
+  normalizedFilename?: string
+  /**
+   * The import specifier for Astro runtime functions.
+   * Defaults to `"astro/runtime/server/index.js"`.
+   */
+  internalUrl?: string
+  /**
+   * Whether to generate a source map.
+   * **Stub**: not yet implemented.
    *
    * @default false
    */
-  includeMetadata?: boolean
+  sourcemap?: boolean
   /**
    * Arguments passed to `$$createAstro` when the Astro global is used.
    * Defaults to `"https://astro.build"`.
    */
   astroGlobalArgs?: string
   /**
+   * Whether to collapse whitespace in the HTML output.
+   * **Stub**: not yet implemented.
+   *
+   * @default false
+   */
+  compact?: boolean
+  /**
+   * Enable scoped slot result handling.
+   * **Stub**: not yet implemented.
+   *
+   * @default false
+   */
+  resultScopedSlot?: boolean
+  /**
+   * Strategy for CSS scoping: `"where"`, `"class"`, or `"attribute"`.
+   * **Stub**: not yet implemented.
+   *
+   * @default "where"
+   */
+  scopedStyleStrategy?: 'where' | 'class' | 'attribute'
+  /**
+   * URL for the view transitions animation CSS.
+   * **Stub**: not yet implemented.
+   */
+  transitionsAnimationUrl?: string
+  /**
+   * Whether to annotate generated code with the source file path.
+   * **Stub**: not yet implemented.
+   *
+   * @default false
+   */
+  annotateSourceFile?: boolean
+  /**
+   * Whether to render processed script tags using `$$renderScript`.
+   *
+   * @default false
+   */
+  renderScript?: boolean
+  /**
+   * Enable experimental script ordering behavior.
+   * **Stub**: not yet implemented.
+   *
+   * @default false
+   */
+  experimentalScriptOrder?: boolean
+  /**
+   * Whether to include the `$$metadata` export.
+   * The Go compiler always includes metadata; this option lets you skip it.
+   * (oxc-specific)
+   *
+   * @default false
+   */
+  includeMetadata?: boolean
+  /**
    * Whether to strip HTML comments from component slot children.
    * Matches the official Astro compiler behavior by default.
+   * (oxc-specific)
    *
    * @default true
    */

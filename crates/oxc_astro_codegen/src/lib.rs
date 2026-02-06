@@ -20,6 +20,10 @@
 
 mod options;
 mod printer;
+pub(crate) mod scanner;
 
-pub use options::AstroCodegenOptions;
-pub use printer::{AstroCodegen, AstroCodegenReturn};
+pub use options::{AstroCodegenOptions, ScopedStyleStrategy, TransformOptions};
+pub use printer::{
+    AstroCodegen, AstroCodegenReturn, HoistedScriptType, TransformResult,
+    TransformResultHoistedScript, TransformResultHydratedComponent,
+};

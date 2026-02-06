@@ -135,7 +135,7 @@ import {
   createMetadata as $$createMetadata
 } from "http://localhost:3000/";
 
-export const $$metadata = $$createMetadata(import.meta.url, { modules: [], hydratedComponents: [], clientOnlyComponents: [], hydrationDirectives: new Set([]), hoisted: [] });
+export const $$metadata = $$createMetadata(import.meta.url, { modules: [], hydratedComponents: [], clientOnlyComponents: [], hydrationDirectives: new Set([]), hoisted: [{ type: "external", src: '/make-scrollable-code-focusable.js' }] });
 
 const $$Component = $$createComponent(($$result, $$props, $$slots) => {
 
@@ -159,7 +159,7 @@ return $$render`<!-- Global Metadata -->
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital@0;1&display=swap" rel="stylesheet">
 
 <!-- Scrollable a11y code helper -->
-<script type="module" src="/make-scrollable-code-focusable.js"></script><script>const root = document.documentElement;
+<script>const root = document.documentElement;
   const theme = localStorage.getItem('theme');
   if (theme === 'dark' || (!theme) && window.matchMedia('(prefers-color-scheme: dark)').matches) {
     root.classList.add('theme-dark');

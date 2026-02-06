@@ -57,6 +57,36 @@ const name = "World";
     expect(result.errors).toEqual([]);
     expect(result.code).toContain("R^{2x}");
   });
+
+  it("returns TransformResult fields", () => {
+    const result = compileAstroSync("<h1>Hello</h1>");
+    expect(result.errors).toEqual([]);
+    // New fields from TransformResult
+    expect(typeof result.map).toBe("string");
+    expect(typeof result.scope).toBe("string");
+    expect(result.scope.length).toBeGreaterThan(0);
+    expect(result.css).toEqual([]);
+    expect(result.scripts).toEqual([]);
+    expect(result.hydratedComponents).toEqual([]);
+    expect(result.clientOnlyComponents).toEqual([]);
+    expect(result.serverComponents).toEqual([]);
+    expect(typeof result.containsHead).toBe("boolean");
+    expect(typeof result.propagation).toBe("boolean");
+    expect(result.styleError).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("detects explicit <head> element", () => {
+    const result = compileAstroSync("<html><head><title>Test</title></head><body><h1>Hi</h1></body></html>");
+    expect(result.errors).toEqual([]);
+    expect(result.containsHead).toBe(true);
+  });
+
+  it("reports containsHead false when no head", () => {
+    const result = compileAstroSync("<h1>Hello</h1>");
+    expect(result.errors).toEqual([]);
+    expect(result.containsHead).toBe(false);
+  });
 });
 
 describe("compileAstro (async)", () => {
@@ -64,5 +94,14 @@ describe("compileAstro (async)", () => {
     const result = await compileAstro("<h1>Hello</h1>");
     expect(result.errors).toEqual([]);
     expect(result.code).toContain("$$render");
+  });
+
+  it("returns TransformResult fields", async () => {
+    const result = await compileAstro("<h1>Hello</h1>");
+    expect(result.errors).toEqual([]);
+    expect(typeof result.map).toBe("string");
+    expect(typeof result.scope).toBe("string");
+    expect(result.css).toEqual([]);
+    expect(result.scripts).toEqual([]);
   });
 });

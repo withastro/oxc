@@ -6,11 +6,16 @@ use cow_utils::CowUtils;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_data_structures::code_buffer::CodeBuffer;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use oxc_codegen::{Codegen, Context, Gen, GenExpr};
 
-use crate::AstroCodegenOptions;
+use crate::TransformOptions;
+use crate::scanner::{
+    AstroScanner, HoistedScript, HoistedScriptType as InternalHoistedScriptType,
+    HydratedComponent, ScanResult, get_jsx_attribute_name, get_jsx_element_name,
+    is_component_name, is_custom_element, should_hoist_script,
+};
 
 /// Runtime function names used in generated code.
 mod runtime {
@@ -35,57 +40,113 @@ mod runtime {
     pub const RESULT: &str = "$$result";
 }
 
+/// The type of a hoisted script.
+///
+/// Matches Go compiler's `HoistedScript.type` field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoistedScriptType {
+    /// An inline script with code content.
+    Inline,
+    /// An external script with a `src` URL.
+    External,
+}
+
+/// A hoisted script extracted from the Astro template.
+///
+/// Matches Go compiler's `HoistedScript` shape.
+#[derive(Debug, Clone)]
+pub struct TransformResultHoistedScript {
+    /// The script type: `"inline"` or `"external"`.
+    pub script_type: HoistedScriptType,
+    /// The inline script code (when `script_type` is `Inline`).
+    pub code: Option<String>,
+    /// The external script src URL (when `script_type` is `External`).
+    pub src: Option<String>,
+    // Note: the Go compiler also has a `map` field for inline scripts (sourcemap),
+    // which we stub as empty string for now.
+}
+
+/// A hydrated component reference found in the template.
+///
+/// Matches Go compiler's `HydratedComponent` shape.
+#[derive(Debug, Clone)]
+pub struct TransformResultHydratedComponent {
+    /// The export name from the module (e.g., `"default"` or a named export).
+    pub export_name: String,
+    /// The local variable name used in the component.
+    pub local_name: String,
+    /// The import specifier (e.g., `"../components/Counter.jsx"`).
+    pub specifier: String,
+    /// The resolved path (filled by `resolvePath` callback; empty string if unresolved).
+    pub resolved_path: String,
+}
+
 /// Output from Astro code generation.
+///
+/// Matches Go compiler's `TransformResult` shape from `@astrojs/compiler`.
 #[derive(Debug)]
-pub struct AstroCodegenReturn {
+pub struct TransformResult {
     /// The generated JavaScript code.
     pub code: String,
-    // TODO: Add sourcemap support
-    // TODO: Add metadata (hydrated components, client-only components, etc.)
+    /// Source map JSON string (stub: empty string until sourcemap support is implemented).
+    pub map: String,
+    /// CSS scope hash for the component (e.g., `"astro-XXXXXX"`).
+    pub scope: String,
+    /// Extracted CSS strings from `<style>` tags (stub: empty vec until CSS support).
+    pub style_error: Vec<String>,
+    /// Diagnostic messages (stub: empty vec).
+    pub diagnostics: Vec<String>,
+    /// Extracted CSS from `<style>` tags (stub: empty vec until CSS support).
+    pub css: Vec<String>,
+    /// Hoisted scripts extracted from the template.
+    pub scripts: Vec<TransformResultHoistedScript>,
+    /// Components with `client:*` hydration directives (except `client:only`).
+    pub hydrated_components: Vec<TransformResultHydratedComponent>,
+    /// Components with `client:only` directive.
+    pub client_only_components: Vec<TransformResultHydratedComponent>,
+    /// Server components (stub: empty vec).
+    pub server_components: Vec<TransformResultHydratedComponent>,
+    /// Whether the template contains an explicit `<head>` element.
+    pub contains_head: bool,
+    /// Whether the component propagates head content.
+    pub propagation: bool,
 }
+
+// Keep the old name as a type alias during migration
+/// Deprecated: Use [`TransformResult`] instead.
+pub type AstroCodegenReturn = TransformResult;
 
 /// Astro code generator.
 ///
 /// Transforms an `AstroRoot` AST into JavaScript code that can be executed
 /// by the Astro runtime.
 pub struct AstroCodegen<'a> {
-    #[expect(dead_code)]
     allocator: &'a Allocator,
-    options: AstroCodegenOptions,
+    options: TransformOptions,
     /// Output buffer
     code: CodeBuffer,
     /// Source text of the original Astro file
     source_text: &'a str,
+    /// Result from the scanner pass (populated in `build()`)
+    scan_result: Option<ScanResult>,
     /// Track if we're inside head element
     in_head: bool,
     /// Track if we've already inserted $$maybeRenderHead or $$renderHead
     render_head_inserted: bool,
     /// Track if we've seen an explicit <head> element (which uses $$renderHead)
     has_explicit_head: bool,
-    /// Collected hydrated components for metadata
-    hydrated_components: Vec<HydratedComponent>,
-    /// Collected client-only components for metadata (specifiers)
+    /// Collected client-only components for metadata (specifiers resolved during printing)
     client_only_components: Vec<String>,
-    /// Collected hydration directives
-    hydration_directives: Vec<String>,
     /// Collected module imports for metadata
     module_imports: Vec<ModuleImport>,
-    /// Whether the source uses `Astro` global (e.g., Astro.props, Astro.slots)
-    uses_astro_global: bool,
     /// Map of component names to their import specifiers (for client:only resolution)
     component_imports: FxHashMap<String, ComponentImportInfo>,
-    /// Set of component names that use client:only
-    client_only_component_names: FxHashSet<String>,
     /// When true, skip printing slot="..." attributes on elements (used for conditional slots)
     skip_slot_attribute: bool,
-    /// Collected hoisted scripts for metadata
-    hoisted_scripts: Vec<HoistedScript>,
     /// Current script index for $$renderScript URLs
     script_index: usize,
     /// Current element nesting depth (0 = root level)
     element_depth: usize,
-    /// Whether the source uses transition directives (transition:name, transition:animate, etc.)
-    uses_transitions: bool,
     /// Counter for generating unique transition hashes
     transition_counter: std::cell::Cell<usize>,
     /// Base hash for the source file (computed once)
@@ -113,49 +174,15 @@ struct ComponentImportInfo {
     is_namespace: bool,
 }
 
-/// Type of hoisted script in Astro metadata.
-#[derive(Debug, Clone)]
-enum HoistedScriptType {
-    /// Inline script: `{ type: "inline", value: \`...\` }`
-    Inline,
-    /// External script with src: `{ type: "external", src: '...' }`
-    External,
-    /// Script with define:vars: `{ type: "define:vars", value: \`...\`, keys: '...' }`
-    DefineVars,
-}
-
-/// Information about a hoisted script for metadata.
-#[derive(Debug, Clone)]
-struct HoistedScript {
-    script_type: HoistedScriptType,
-    /// The script content (for inline and define:vars)
-    value: Option<String>,
-    /// The external src (for external scripts)
-    src: Option<String>,
-    /// The variable keys (for define:vars)
-    keys: Option<String>,
-}
-
-/// Information about a hydrated component for metadata.
-#[derive(Debug, Clone)]
-struct HydratedComponent {
-    /// The component name (e.g., "One", "my-element")
-    name: String,
-    /// Whether this is a custom element (has a dash in the name)
-    is_custom_element: bool,
-}
+// Internal types (HoistedScript, HydratedComponent, etc.) are now defined in scanner.rs
 
 impl<'a> AstroCodegen<'a> {
     /// Create a new Astro codegen instance.
     pub fn new(
         allocator: &'a Allocator,
         source_text: &'a str,
-        options: AstroCodegenOptions,
+        options: TransformOptions,
     ) -> Self {
-        // Check if the source uses Astro global (e.g., Astro.props, Astro.slots)
-        let uses_astro_global = source_text.contains("Astro");
-        // Check if the source uses transition directives
-        let uses_transitions = source_text.contains("transition:");
         // Compute base hash for the source file (similar to Go compiler's HashString)
         let source_hash = Self::compute_source_hash(source_text);
 
@@ -164,21 +191,16 @@ impl<'a> AstroCodegen<'a> {
             options,
             code: CodeBuffer::default(),
             source_text,
+            scan_result: None,
             in_head: false,
             render_head_inserted: false,
             has_explicit_head: false,
-            hydrated_components: Vec::new(),
             client_only_components: Vec::new(),
-            hydration_directives: Vec::new(),
             module_imports: Vec::new(),
-            uses_astro_global,
             component_imports: FxHashMap::default(),
-            client_only_component_names: FxHashSet::default(),
             skip_slot_attribute: false,
-            hoisted_scripts: Vec::new(),
             script_index: 0,
             element_depth: 0,
-            uses_transitions,
             transition_counter: std::cell::Cell::new(0),
             source_hash,
         }
@@ -209,6 +231,36 @@ impl<'a> AstroCodegen<'a> {
         result
     }
 
+    // --- Scan result accessors ---
+
+    fn scan(&self) -> &ScanResult {
+        self.scan_result.as_ref().expect("scanner must run before printing")
+    }
+
+    fn uses_astro_global(&self) -> bool {
+        self.scan().uses_astro_global
+    }
+
+    fn uses_transitions(&self) -> bool {
+        self.scan().uses_transitions
+    }
+
+    fn is_client_only_component(&self, name: &str) -> bool {
+        self.scan().client_only_component_names.contains(name)
+    }
+
+    fn hoisted_scripts(&self) -> &[HoistedScript] {
+        &self.scan().hoisted_scripts
+    }
+
+    fn hydrated_components(&self) -> &[HydratedComponent] {
+        &self.scan().hydrated_components
+    }
+
+    fn hydration_directives(&self) -> &[String] {
+        &self.scan().hydration_directives
+    }
+
     /// Check if the source contains `await` and thus needs async functions.
     /// This is a simple text check matching the Go compiler behavior.
     fn needs_async(&self) -> bool {
@@ -221,9 +273,83 @@ impl<'a> AstroCodegen<'a> {
     }
 
     /// Build the JavaScript output from an Astro AST.
-    pub fn build(mut self, root: &'a AstroRoot<'a>) -> AstroCodegenReturn {
+    pub fn build(mut self, root: &'a AstroRoot<'a>) -> TransformResult {
+        // Phase 1: Scan — collect metadata in a single AST walk
+        let scan_result = AstroScanner::new(self.allocator).scan(root);
+        self.scan_result = Some(scan_result);
+
+        // Phase 2: Print — emit code using the collected metadata
         self.print_astro_root(root);
-        AstroCodegenReturn { code: self.code.into_string() }
+
+        // Build public hoisted scripts from internal representation
+        let scripts = self
+            .hoisted_scripts()
+            .iter()
+            .map(|s| match s.script_type {
+                InternalHoistedScriptType::External => TransformResultHoistedScript {
+                    script_type: HoistedScriptType::External,
+                    src: s.src.clone(),
+                    code: None,
+                },
+                InternalHoistedScriptType::Inline | InternalHoistedScriptType::DefineVars => {
+                    TransformResultHoistedScript {
+                        script_type: HoistedScriptType::Inline,
+                        code: s.value.clone(),
+                        src: None,
+                    }
+                }
+            })
+            .collect();
+
+        // Build public hydrated components from internal representation
+        let hydrated_components = self
+            .hydrated_components()
+            .iter()
+            .filter_map(|h| {
+                let info = self.component_imports.get(&h.name)?;
+                Some(TransformResultHydratedComponent {
+                    export_name: info.export_name.clone(),
+                    local_name: h.name.clone(),
+                    specifier: info.specifier.clone(),
+                    resolved_path: String::new(),
+                })
+            })
+            .collect();
+
+        // Build public client-only components from internal representation
+        let client_only_components = self
+            .client_only_components
+            .iter()
+            .filter_map(|name| {
+                let info = self.component_imports.get(name)?;
+                Some(TransformResultHydratedComponent {
+                    export_name: info.export_name.clone(),
+                    local_name: name.clone(),
+                    specifier: info.specifier.clone(),
+                    resolved_path: String::new(),
+                })
+            })
+            .collect();
+
+        let propagation = self.uses_transitions();
+        let contains_head = self.has_explicit_head;
+        let scope = self.source_hash.clone();
+        let code = self.code.into_string();
+
+        TransformResult {
+            code,
+            map: String::new(),
+            scope,
+            style_error: Vec::new(),
+            diagnostics: Vec::new(),
+            css: Vec::new(),
+            scripts,
+            hydrated_components,
+            client_only_components,
+            server_components: Vec::new(),
+            contains_head,
+            propagation,
+        }
     }
 
     fn print(&mut self, s: &str) {
@@ -236,12 +362,6 @@ impl<'a> AstroCodegen<'a> {
     }
 
     fn print_astro_root(&mut self, root: &'a AstroRoot<'a>) {
-        // 0. Pre-scan: Find all client:only components in the template
-        self.scan_client_only_components(&root.body);
-
-        // 0b. Pre-scan: Collect all scripts for hoisting
-        self.scan_and_collect_scripts(&root.body);
-
         // 1. Print internal imports
         self.print_internal_imports();
 
@@ -272,7 +392,7 @@ impl<'a> AstroCodegen<'a> {
         }
 
         // 5. Print top-level Astro global if needed (before exports, per Go compiler)
-        if self.uses_astro_global {
+        if self.uses_astro_global() {
             self.print_top_level_astro();
         }
 
@@ -289,434 +409,8 @@ impl<'a> AstroCodegen<'a> {
         self.println(&format!("export default {component_name};"));
     }
 
-    /// Scan the template body to find all client:only components
-    /// Pre-scan the template to collect hydration metadata:
-    /// - client:only component names (for import filtering)
-    /// - hydrated components (for metadata array)
-    /// - hydration directives (for metadata Set)
-    fn scan_client_only_components(&mut self, body: &[JSXChild<'a>]) {
-        for child in body {
-            self.scan_client_only_in_child(child);
-        }
-    }
+    // === Printing methods below — all analysis is done by the scanner ===
 
-    fn scan_client_only_in_child(&mut self, child: &JSXChild<'a>) {
-        match child {
-            JSXChild::Element(el) => {
-                let name = get_jsx_element_name(&el.opening_element.name);
-                let is_component = is_component_name(&name);
-                let is_custom = is_custom_element(&name);
-
-                // Check for client:* directives
-                for attr in &el.opening_element.attributes {
-                    if let JSXAttributeItem::Attribute(attr) = attr {
-                        let attr_name = get_jsx_attribute_name(&attr.name);
-
-                        // Check for any client:* directive
-                        if let Some(directive) = attr_name.strip_prefix("client:") {
-                            if directive == "only" {
-                                // client:only components go ONLY in clientOnlyComponents, NOT hydratedComponents
-                                // Track in client_only_component_names for import removal
-                                if name.contains('.') {
-                                    let namespace = name.split('.').next().unwrap();
-                                    self.client_only_component_names.insert(namespace.to_string());
-                                } else {
-                                    self.client_only_component_names.insert(name);
-                                }
-                                // Track "only" directive
-                                if !self.hydration_directives.contains(&"only".to_string()) {
-                                    self.hydration_directives.push("only".to_string());
-                                }
-                            } else {
-                                // Regular hydration directives (load, visible, idle, media)
-                                // Track hydration directive
-                                if !self.hydration_directives.contains(&directive.to_string()) {
-                                    self.hydration_directives.push(directive.to_string());
-                                }
-
-                                // Track hydrated component for metadata
-                                // Only track if it's a component (uppercase) or custom element (has dash)
-                                if (is_component || is_custom)
-                                    && !self.hydrated_components.iter().any(|c| c.name == name)
-                                {
-                                    self.hydrated_components.push(HydratedComponent {
-                                        name,
-                                        is_custom_element: is_custom,
-                                    });
-                                }
-                            }
-
-                            break; // Only process first client:* directive
-                        }
-                    }
-                }
-
-                // Recurse into children
-                for child in &el.children {
-                    self.scan_client_only_in_child(child);
-                }
-            }
-            JSXChild::Fragment(frag) => {
-                for child in &frag.children {
-                    self.scan_client_only_in_child(child);
-                }
-            }
-            JSXChild::ExpressionContainer(expr) => {
-                // May contain JSX elements in expressions
-                self.scan_client_only_in_expression(&expr.expression);
-            }
-            _ => {}
-        }
-    }
-
-    fn scan_client_only_in_expression(&mut self, expr: &JSXExpression<'a>) {
-        if let Some(e) = expr.as_expression() {
-            self.scan_client_only_in_expr(e);
-        }
-    }
-
-    fn scan_client_only_in_expr(&mut self, expr: &Expression<'a>) {
-        match expr {
-            Expression::JSXElement(el) => {
-                let name = get_jsx_element_name(&el.opening_element.name);
-                let is_component = is_component_name(&name);
-                let is_custom = is_custom_element(&name);
-
-                for attr in &el.opening_element.attributes {
-                    if let JSXAttributeItem::Attribute(attr) = attr {
-                        let attr_name = get_jsx_attribute_name(&attr.name);
-
-                        // Check for any client:* directive
-                        if let Some(directive) = attr_name.strip_prefix("client:") {
-                            if directive == "only" {
-                                // client:only components go ONLY in clientOnlyComponents, NOT hydratedComponents
-                                if name.contains('.') {
-                                    let namespace = name.split('.').next().unwrap();
-                                    self.client_only_component_names.insert(namespace.to_string());
-                                } else {
-                                    self.client_only_component_names.insert(name);
-                                }
-                                // Track "only" directive
-                                if !self.hydration_directives.contains(&"only".to_string()) {
-                                    self.hydration_directives.push("only".to_string());
-                                }
-                            } else {
-                                // Regular hydration directives (load, visible, idle, media)
-                                if !self.hydration_directives.contains(&directive.to_string()) {
-                                    self.hydration_directives.push(directive.to_string());
-                                }
-
-                                // Track hydrated component
-                                if (is_component || is_custom)
-                                    && !self.hydrated_components.iter().any(|c| c.name == name)
-                                {
-                                    self.hydrated_components.push(HydratedComponent {
-                                        name,
-                                        is_custom_element: is_custom,
-                                    });
-                                }
-                            }
-
-                            break;
-                        }
-                    }
-                }
-
-                for child in &el.children {
-                    self.scan_client_only_in_child(child);
-                }
-            }
-            Expression::JSXFragment(frag) => {
-                for child in &frag.children {
-                    self.scan_client_only_in_child(child);
-                }
-            }
-            Expression::ConditionalExpression(cond) => {
-                self.scan_client_only_in_expr(&cond.test);
-                self.scan_client_only_in_expr(&cond.consequent);
-                self.scan_client_only_in_expr(&cond.alternate);
-            }
-            Expression::LogicalExpression(logic) => {
-                self.scan_client_only_in_expr(&logic.left);
-                self.scan_client_only_in_expr(&logic.right);
-            }
-            Expression::ParenthesizedExpression(paren) => {
-                self.scan_client_only_in_expr(&paren.expression);
-            }
-            Expression::CallExpression(call) => {
-                for arg in &call.arguments {
-                    if let Some(e) = arg.as_expression() {
-                        self.scan_client_only_in_expr(e);
-                    }
-                }
-            }
-            Expression::ArrowFunctionExpression(arrow) => {
-                for stmt in &arrow.body.statements {
-                    if let Statement::ExpressionStatement(expr_stmt) = stmt {
-                        self.scan_client_only_in_expr(&expr_stmt.expression);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Scan the template body to find all scripts and collect them for hoisting.
-    fn scan_and_collect_scripts(&mut self, body: &'a [JSXChild<'a>]) {
-        for child in body {
-            self.scan_scripts_in_child(child);
-        }
-    }
-
-    fn scan_scripts_in_child(&mut self, child: &'a JSXChild<'a>) {
-        match child {
-            JSXChild::AstroScript(script) => {
-                // Direct AstroScript child - collect it
-                self.collect_script_from_program(&script.program, &[]);
-            }
-            JSXChild::Element(el) => {
-                let name = get_jsx_element_name(&el.opening_element.name);
-
-                // Check if this is a <script> element
-                if name == "script" {
-                    // Check if this script should be hoisted
-                    if !should_hoist_script(&el.opening_element.attributes) {
-                        return;
-                    }
-
-                    let attrs: Vec<_> = el.opening_element.attributes.iter().collect();
-
-                    // First try AstroScript child (parsed JS/TS content)
-                    for child in &el.children {
-                        if let JSXChild::AstroScript(script) = child {
-                            self.collect_script_from_program(&script.program, &attrs);
-                            return;
-                        }
-                    }
-
-                    // Fall back to JSXText child (raw text content)
-                    // This handles scripts with attributes like `type="module" hoist`
-                    // where the parser kept the content as raw text
-                    self.collect_script_from_text_children(&el.children, &attrs);
-                    return;
-                }
-
-                // Recurse into element children
-                for child in &el.children {
-                    self.scan_scripts_in_child(child);
-                }
-            }
-            JSXChild::Fragment(frag) => {
-                for child in &frag.children {
-                    self.scan_scripts_in_child(child);
-                }
-            }
-            JSXChild::ExpressionContainer(expr) => {
-                self.scan_scripts_in_expression(&expr.expression);
-            }
-            _ => {}
-        }
-    }
-
-    fn scan_scripts_in_expression(&mut self, expr: &'a JSXExpression<'a>) {
-        if let Some(e) = expr.as_expression() {
-            self.scan_scripts_in_expr(e);
-        }
-    }
-
-    fn scan_scripts_in_expr(&mut self, expr: &'a Expression<'a>) {
-        match expr {
-            Expression::JSXElement(el) => {
-                let name = get_jsx_element_name(&el.opening_element.name);
-
-                // Check if this is a <script> element
-                if name == "script" {
-                    // Check if this script should be hoisted
-                    if !should_hoist_script(&el.opening_element.attributes) {
-                        return;
-                    }
-
-                    let attrs: Vec<_> = el.opening_element.attributes.iter().collect();
-
-                    // First try AstroScript child (parsed JS/TS content)
-                    for child in &el.children {
-                        if let JSXChild::AstroScript(script) = child {
-                            self.collect_script_from_program(&script.program, &attrs);
-                            return;
-                        }
-                    }
-
-                    // Fall back to JSXText child (raw text content)
-                    self.collect_script_from_text_children(&el.children, &attrs);
-                    return;
-                }
-
-                for child in &el.children {
-                    self.scan_scripts_in_child(child);
-                }
-            }
-            Expression::JSXFragment(frag) => {
-                for child in &frag.children {
-                    self.scan_scripts_in_child(child);
-                }
-            }
-            Expression::ConditionalExpression(cond) => {
-                self.scan_scripts_in_expr(&cond.test);
-                self.scan_scripts_in_expr(&cond.consequent);
-                self.scan_scripts_in_expr(&cond.alternate);
-            }
-            Expression::LogicalExpression(logic) => {
-                self.scan_scripts_in_expr(&logic.left);
-                self.scan_scripts_in_expr(&logic.right);
-            }
-            Expression::ParenthesizedExpression(paren) => {
-                self.scan_scripts_in_expr(&paren.expression);
-            }
-            _ => {}
-        }
-    }
-
-    /// Collect a script from its parsed program and attributes.
-    fn collect_script_from_program(
-        &mut self,
-        program: &Program<'a>,
-        attrs: &[&JSXAttributeItem<'a>],
-    ) {
-        // Check for src attribute (external script)
-        let mut src_value: Option<String> = None;
-        let mut define_vars_value: Option<String> = None;
-        let mut define_vars_keys: Option<String> = None;
-
-        for attr in attrs {
-            if let JSXAttributeItem::Attribute(attr) = attr {
-                let attr_name = get_jsx_attribute_name(&attr.name);
-                if attr_name == "src" {
-                    if let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value {
-                        src_value = Some(lit.value.to_string());
-                    }
-                } else if attr_name == "define:vars" {
-                    // Extract the variable object expression
-                    if let Some(JSXAttributeValue::ExpressionContainer(container)) = &attr.value
-                        && let Some(expr) = container.expression.as_expression()
-                        && let Expression::ObjectExpression(obj) = expr
-                    {
-                        // Extract the keys from the object
-                        let keys: Vec<String> = obj
-                            .properties
-                            .iter()
-                            .filter_map(|prop| {
-                                if let ObjectPropertyKind::ObjectProperty(p) = prop {
-                                    Some(get_property_key_name(&p.key))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        define_vars_keys = Some(keys.join(","));
-
-                        // Generate the script content for define:vars
-                        let content = Self::get_script_content(program);
-                        define_vars_value = Some(content);
-                    }
-                }
-            }
-        }
-
-        // Determine the type of hoisted script
-        if let Some(keys) = define_vars_keys {
-            // define:vars script
-            let value = define_vars_value.unwrap_or_default();
-            self.hoisted_scripts.push(HoistedScript {
-                script_type: HoistedScriptType::DefineVars,
-                value: Some(value),
-                src: None,
-                keys: Some(keys),
-            });
-        } else if let Some(src) = src_value {
-            // External script
-            self.hoisted_scripts.push(HoistedScript {
-                script_type: HoistedScriptType::External,
-                value: None,
-                src: Some(src),
-                keys: None,
-            });
-        } else {
-            // Inline script - only add if there's actual content
-            // Empty scripts (like <script></script>) are not hoisted by the Go compiler
-            let content = Self::get_script_content(program);
-            if !content.is_empty() {
-                self.hoisted_scripts.push(HoistedScript {
-                    script_type: HoistedScriptType::Inline,
-                    value: Some(content),
-                    src: None,
-                    keys: None,
-                });
-            }
-        }
-    }
-
-    /// Collect a script from JSXText children (raw text content).
-    /// This handles scripts where the parser kept the content as raw text
-    /// (e.g., scripts with attributes like `type="module" hoist`).
-    fn collect_script_from_text_children(
-        &mut self,
-        children: &[JSXChild<'a>],
-        attrs: &[&JSXAttributeItem<'a>],
-    ) {
-        // Check for src attribute (external script)
-        let mut src_value: Option<String> = None;
-
-        for attr in attrs {
-            if let JSXAttributeItem::Attribute(attr) = attr {
-                let attr_name = get_jsx_attribute_name(&attr.name);
-                if attr_name == "src"
-                    && let Some(JSXAttributeValue::StringLiteral(lit)) = &attr.value
-                {
-                    src_value = Some(lit.value.to_string());
-                }
-            }
-        }
-
-        if let Some(src) = src_value {
-            // External script
-            self.hoisted_scripts.push(HoistedScript {
-                script_type: HoistedScriptType::External,
-                value: None,
-                src: Some(src),
-                keys: None,
-            });
-        } else {
-            // Inline script - collect text content from children
-            let content: String = children
-                .iter()
-                .filter_map(|child| {
-                    if let JSXChild::Text(text) = child { Some(text.value.as_str()) } else { None }
-                })
-                .collect::<Vec<_>>()
-                .join("");
-
-            let content = content.trim();
-            if !content.is_empty() {
-                self.hoisted_scripts.push(HoistedScript {
-                    script_type: HoistedScriptType::Inline,
-                    value: Some(content.to_string()),
-                    src: None,
-                    keys: None,
-                });
-            }
-        }
-    }
-
-    /// Get the script content from a program by re-printing it.
-    fn get_script_content(program: &Program<'a>) -> String {
-        // Use the standard codegen to regenerate the script content
-        let codegen = Codegen::new();
-        let output = codegen.build(program);
-        // Trim trailing newline
-        output.code.trim_end().to_string()
-    }
-
-    /// Get the script content from the original source text.
     fn print_internal_imports(&mut self) {
         let url = self.options.get_internal_url().to_string();
 
@@ -742,7 +436,7 @@ impl<'a> AstroCodegen<'a> {
         self.println(&format!("}} from \"{url}\";"));
 
         // Add transitions.css import if transitions are used
-        if self.uses_transitions {
+        if self.uses_transitions() {
             self.println("import \"transitions.css\";");
         }
     }
@@ -791,12 +485,12 @@ impl<'a> AstroCodegen<'a> {
 
         // Build hydrated components array
         // Go compiler outputs: custom elements first (quoted), then regular components in reverse order
-        let hydrated_str = if self.hydrated_components.is_empty() {
+        let hydrated_str = if self.hydrated_components().is_empty() {
             "[]".to_string()
         } else {
             // Separate custom elements and regular components
             let custom_elements: Vec<String> = self
-                .hydrated_components
+                .hydrated_components()
                 .iter()
                 .filter(|c| c.is_custom_element)
                 .map(|c| format!("\"{}\"", c.name))
@@ -804,7 +498,7 @@ impl<'a> AstroCodegen<'a> {
 
             // Regular components in reverse order
             let regular_components: Vec<String> = self
-                .hydrated_components
+                .hydrated_components()
                 .iter()
                 .filter(|c| !c.is_custom_element)
                 .rev()
@@ -827,36 +521,36 @@ impl<'a> AstroCodegen<'a> {
         };
 
         // Build hydration directives set
-        let directives_str = if self.hydration_directives.is_empty() {
+        let directives_str = if self.hydration_directives().is_empty() {
             "new Set([])".to_string()
         } else {
             let items: Vec<String> =
-                self.hydration_directives.iter().map(|s| format!("\"{s}\"")).collect();
+                self.hydration_directives().iter().map(|s| format!("\"{s}\"")).collect();
             format!("new Set([{}])", items.join(", "))
         };
 
         // Build hoisted scripts array
-        let hoisted_str = if self.hoisted_scripts.is_empty() {
+        let hoisted_str = if self.hoisted_scripts().is_empty() {
             "[]".to_string()
         } else {
             let items: Vec<String> = self
-                .hoisted_scripts
+                .hoisted_scripts()
                 .iter()
                 .map(|script| {
                     match script.script_type {
-                        HoistedScriptType::Inline => {
+                        InternalHoistedScriptType::Inline => {
                             let value = script.value.as_deref().unwrap_or("");
                             // Escape backticks and interpolation for template literal
                             let escaped = escape_template_literal(value);
                             format!("{{ type: \"inline\", value: `{escaped}` }}")
                         }
-                        HoistedScriptType::External => {
+                        InternalHoistedScriptType::External => {
                             let src = script.src.as_deref().unwrap_or("");
                             // Escape single quotes for string literal
                             let escaped = escape_single_quote(src);
                             format!("{{ type: \"external\", src: '{escaped}' }}")
                         }
-                        HoistedScriptType::DefineVars => {
+                        InternalHoistedScriptType::DefineVars => {
                             let value = script.value.as_deref().unwrap_or("");
                             let keys = script.keys.as_deref().unwrap_or("");
                             let escaped_value = escape_template_literal(value);
@@ -998,7 +692,7 @@ impl<'a> AstroCodegen<'a> {
                                         s.local.name.as_str()
                                     }
                                 };
-                                self.client_only_component_names.contains(local_name)
+                                self.is_client_only_component(local_name)
                             })
                         } else {
                             false
@@ -1009,10 +703,7 @@ impl<'a> AstroCodegen<'a> {
                             if !self.client_only_components.contains(&source.to_string()) {
                                 self.client_only_components.push(source.to_string());
                             }
-                            // Add "only" to hydration directives
-                            if !self.hydration_directives.contains(&"only".to_string()) {
-                                self.hydration_directives.push("only".to_string());
-                            }
+                            // Hydration directives are tracked by the scanner
                         } else {
                             // Normal import - add to modules
                             let namespace_var = format!("$$module{module_counter}");
@@ -1083,7 +774,7 @@ impl<'a> AstroCodegen<'a> {
         ));
 
         // Print Astro setup inside component if needed
-        if self.uses_astro_global {
+        if self.uses_astro_global() {
             self.println(&format!(
                 "const Astro = {}.createAstro($$Astro, $$props, $$slots);",
                 runtime::RESULT
@@ -1129,7 +820,7 @@ impl<'a> AstroCodegen<'a> {
             None => "undefined".to_string(),
         };
         // Third argument: "self" when transitions are used, undefined otherwise
-        let propagation = if self.uses_transitions { "\"self\"" } else { "undefined" };
+        let propagation = if self.uses_transitions() { "\"self\"" } else { "undefined" };
         self.println(&format!("}}, {filename_part}, {propagation});"));
     }
 
@@ -1372,7 +1063,7 @@ impl<'a> AstroCodegen<'a> {
 
     fn print_component_element(&mut self, el: &JSXElement<'a>, name: &str) {
         // Check for client:* directives
-        let mut hydration_info = self.extract_hydration_info(&el.opening_element.attributes);
+        let mut hydration_info = Self::extract_hydration_info(&el.opening_element.attributes);
 
         // Check if this is a custom element (has dash in name)
         let is_custom = is_custom_element(name);
@@ -1403,14 +1094,7 @@ impl<'a> AstroCodegen<'a> {
                 hydration_info.component_export = Some(import_info.export_name.clone());
             }
 
-            // Track this component as hydrated for metadata
-            // Custom elements are stored as strings, imported components as identifiers
-            if !self.hydrated_components.iter().any(|c| c.name == name) {
-                self.hydrated_components.push(HydratedComponent {
-                    name: name.to_string(),
-                    is_custom_element: is_custom,
-                });
-            }
+            // Hydrated component tracking is done by the scanner
         }
 
         // Check for set:html or set:text on components (including Fragment)
@@ -2938,7 +2622,7 @@ impl<'a> AstroCodegen<'a> {
         }
     }
 
-    fn extract_hydration_info(&mut self, attrs: &[JSXAttributeItem<'a>]) -> HydrationInfo {
+    fn extract_hydration_info(attrs: &[JSXAttributeItem<'a>]) -> HydrationInfo {
         let mut info = HydrationInfo::default();
 
         for attr in attrs {
@@ -2948,12 +2632,7 @@ impl<'a> AstroCodegen<'a> {
                 if let Some(directive) = name.strip_prefix("client:") {
                     info.directive = Some(directive.to_string());
 
-                    // Track hydration directive for metadata (skip "only" as it's handled in split_frontmatter)
-                    if directive != "only"
-                        && !self.hydration_directives.contains(&directive.to_string())
-                    {
-                        self.hydration_directives.push(directive.to_string());
-                    }
+                    // Hydration directives are tracked by the scanner
 
                     // Extract value for client:only="framework"
                     if directive == "only" {
@@ -2986,123 +2665,6 @@ struct HydrationInfo {
 }
 
 // Helper functions
-
-fn get_jsx_element_name(name: &JSXElementName<'_>) -> String {
-    match name {
-        JSXElementName::Identifier(ident) => ident.name.to_string(),
-        JSXElementName::IdentifierReference(ident) => ident.name.to_string(),
-        JSXElementName::NamespacedName(ns) => {
-            format!("{}:{}", ns.namespace.name, ns.name.name)
-        }
-        JSXElementName::MemberExpression(member) => get_jsx_member_expression_name(member),
-        JSXElementName::ThisExpression(_) => "this".to_string(),
-    }
-}
-
-fn get_jsx_member_expression_name(expr: &JSXMemberExpression<'_>) -> String {
-    let object = match &expr.object {
-        JSXMemberExpressionObject::IdentifierReference(ident) => ident.name.to_string(),
-        JSXMemberExpressionObject::MemberExpression(member) => {
-            get_jsx_member_expression_name(member)
-        }
-        JSXMemberExpressionObject::ThisExpression(_) => "this".to_string(),
-    };
-    format!("{}.{}", object, expr.property.name)
-}
-
-fn get_jsx_attribute_name(name: &JSXAttributeName<'_>) -> String {
-    match name {
-        JSXAttributeName::Identifier(ident) => ident.name.to_string(),
-        JSXAttributeName::NamespacedName(ns) => {
-            format!("{}:{}", ns.namespace.name, ns.name.name)
-        }
-    }
-}
-
-/// Check if the attributes contain `is:inline`
-fn has_is_inline_attr(attrs: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>) -> bool {
-    attrs.iter().any(|attr| {
-        if let JSXAttributeItem::Attribute(attr) = attr {
-            get_jsx_attribute_name(&attr.name) == "is:inline"
-        } else {
-            false
-        }
-    })
-}
-
-/// Check if a script element should be hoisted based on its attributes.
-/// According to the Astro compiler:
-/// - Scripts with `hoist` attr → hoist
-/// - Scripts with no attrs → hoist
-/// - Scripts with only `src` attr → hoist (external)
-/// - Scripts with `is:inline` → don't hoist
-/// - Scripts with other attrs → don't hoist (implicitly inline per Astro 3.0+)
-fn should_hoist_script(attrs: &oxc_allocator::Vec<'_, JSXAttributeItem<'_>>) -> bool {
-    // Don't hoist if has is:inline
-    if has_is_inline_attr(attrs) {
-        return false;
-    }
-
-    // No attributes → hoist
-    if attrs.is_empty() {
-        return true;
-    }
-
-    // Check for hoist attribute
-    let has_hoist = attrs.iter().any(|attr| {
-        if let JSXAttributeItem::Attribute(attr) = attr {
-            get_jsx_attribute_name(&attr.name) == "hoist"
-        } else {
-            false
-        }
-    });
-
-    if has_hoist {
-        return true;
-    }
-
-    // Only src attribute → hoist (external script)
-    let attr_names: Vec<_> = attrs
-        .iter()
-        .filter_map(|attr| {
-            if let JSXAttributeItem::Attribute(attr) = attr {
-                Some(get_jsx_attribute_name(&attr.name))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if attr_names.len() == 1 && attr_names[0] == "src" {
-        return true;
-    }
-
-    // Other attributes → don't hoist (implicitly inline)
-    false
-}
-
-fn get_property_key_name(key: &PropertyKey<'_>) -> String {
-    match key {
-        PropertyKey::StaticIdentifier(ident) => ident.name.to_string(),
-        PropertyKey::StringLiteral(lit) => lit.value.to_string(),
-        PropertyKey::NumericLiteral(num) => {
-            num.raw.as_ref().map_or_else(|| num.value.to_string(), std::string::ToString::to_string)
-        }
-        _ => String::new(),
-    }
-}
-
-fn is_component_name(name: &str) -> bool {
-    // Components start with uppercase or contain a dot (member expression)
-    name.chars().next().is_some_and(char::is_uppercase) || name.contains('.')
-}
-
-/// Custom elements are HTML elements with a dash in their name (Web Components).
-/// They are rendered via $$renderComponent like Astro components, but with the
-/// tag name as a quoted string instead of an identifier.
-fn is_custom_element(name: &str) -> bool {
-    name.contains('-')
-}
 
 fn is_void_element(name: &str) -> bool {
     matches!(
@@ -3587,7 +3149,7 @@ mod tests {
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(ret.errors.is_empty(), "Parse errors: {:?}", ret.errors);
 
-        let options = AstroCodegenOptions::new()
+        let options = TransformOptions::new()
             .with_internal_url("http://localhost:3000/")
             .with_metadata(true);
 
