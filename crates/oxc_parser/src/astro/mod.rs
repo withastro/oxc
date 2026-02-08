@@ -63,7 +63,7 @@ impl<'a> ParserImpl<'a> {
 
                 // `<>` - fragment
                 if kind == Kind::RAngle {
-                    return Some(JSXChild::Fragment(self.parse_jsx_fragment(span, true)));
+                    return Some(JSXChild::Fragment(self.parse_astro_jsx_fragment(span, true)));
                 }
 
                 // `<ident` - element
@@ -83,7 +83,7 @@ impl<'a> ParserImpl<'a> {
                             }
                         }
                     }
-                    return Some(JSXChild::Element(self.parse_jsx_element(span, true)));
+                    return Some(JSXChild::Element(self.parse_astro_jsx_element(span, true)));
                 }
 
                 // `</` - closing tag (end of parent)
@@ -114,7 +114,7 @@ impl<'a> ParserImpl<'a> {
 
                 // `{expr}` - expression
                 Some(JSXChild::ExpressionContainer(
-                    self.parse_jsx_expression_container(span_start, /* in_jsx_child */ true),
+                    self.parse_astro_jsx_expression_container(span_start, /* in_jsx_child */ true),
                 ))
             }
             Kind::JSXText => Some(JSXChild::Text(self.parse_jsx_text())),
@@ -228,8 +228,8 @@ impl<'a> ParserImpl<'a> {
         // Skip the `script` identifier
         self.bump_any();
 
-        // Parse attributes using the standard JSX attribute parser
-        let attributes = self.parse_jsx_attributes();
+        // Parse attributes using the Astro JSX attribute parser
+        let attributes = self.parse_astro_jsx_attributes();
         let has_attributes = !attributes.is_empty();
 
         // Check for self-closing `/>`
@@ -420,7 +420,7 @@ impl<'a> ParserImpl<'a> {
         }
 
         // Fallback: couldn't find closing tag, parse as regular element
-        JSXChild::Element(self.parse_jsx_element(span, true))
+        JSXChild::Element(self.parse_astro_jsx_element(span, true))
     }
 }
 

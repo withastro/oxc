@@ -22,42 +22,17 @@ impl<'a> Dummy<'a> for JSXClosing<'a> {
 
 impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_jsx_expression(&mut self) -> Expression<'a> {
+        #[cfg(feature = "astro")]
+        if self.source_type.is_astro() {
+            return self.parse_astro_jsx_expression();
+        }
+
         let span = self.start_span();
         self.bump_any(); // bump `<`
         let kind = self.cur_kind();
         if kind == Kind::RAngle {
             Expression::JSXFragment(self.parse_jsx_fragment(span, false))
         } else if kind.is_identifier_or_keyword() {
-            // In Astro, check for <script> which needs special handling
-            #[cfg(feature = "astro")]
-            if self.source_type.is_astro() && self.cur_src() == "script" {
-                // parse_astro_script_in_jsx returns JSXChild, convert to Expression
-                return match self.parse_astro_script_in_jsx(span) {
-                    JSXChild::Element(el) => Expression::JSXElement(el),
-                    JSXChild::AstroScript(script) => {
-                        // Wrap AstroScript in a synthetic JSX element for expression context
-                        // This maintains the expectation that JSX expressions return JSXElement
-                        let script_span = script.span;
-                        let name = self
-                            .ast
-                            .jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
-                        let elem_name = JSXElementName::Identifier(self.alloc(name));
-                        let opening = self.ast.alloc_jsx_opening_element(
-                            script_span,
-                            elem_name,
-                            Option::<Box<'a, oxc_ast::ast::TSTypeParameterInstantiation<'a>>>::None,
-                            self.ast.vec(),
-                        );
-                        Expression::JSXElement(self.ast.alloc_jsx_element(
-                            script_span,
-                            opening,
-                            self.ast.vec1(JSXChild::AstroScript(script)),
-                            Option::<Box<'a, JSXClosingElement<'a>>>::None,
-                        ))
-                    }
-                    _ => unreachable!("parse_astro_script_in_jsx returns Element or AstroScript"),
-                };
-            }
             Expression::JSXElement(self.parse_jsx_element(span, false))
         } else {
             self.unexpected()
@@ -104,39 +79,11 @@ impl<'a> ParserImpl<'a> {
         span: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXElement<'a>> {
-        // In Astro, raw text elements (script/style) need special handling
-        #[cfg(feature = "astro")]
-        let (opening_element, self_closing, is_raw_text_element, prev_no_expression) =
-            self.parse_jsx_opening_element(span, in_jsx_child);
-        #[cfg(not(feature = "astro"))]
         let (opening_element, self_closing) = self.parse_jsx_opening_element(span, in_jsx_child);
 
         let (children, closing_element) = if self_closing {
             (self.ast.vec(), None)
         } else {
-            // In Astro, raw text elements (script/style/is:raw) need special handling:
-            // their content is not parsed as JSX children but as raw text.
-            #[cfg(feature = "astro")]
-            let (children, closing) = if is_raw_text_element {
-                let children =
-                    self.skip_astro_raw_text_element_content(&opening_element.name, in_jsx_child);
-                // Restore the no-expression flag (saved in parse_jsx_opening_element)
-                self.lexer.no_expression_in_jsx_children = prev_no_expression;
-                // After raw text content, we're positioned at `<` of the closing tag.
-                // Parse `</name>` manually since we bypassed parse_jsx_children_and_closing.
-                let closing_span = self.start_span();
-                self.bump_any(); // bump `<`
-                self.bump_any(); // bump `/`
-                let closing = self.parse_jsx_closing_inline(closing_span, in_jsx_child);
-                (children, closing)
-            } else {
-                // Restore the no-expression flag (saved in parse_jsx_opening_element)
-                // after parsing regular children
-                let result = self.parse_jsx_children_and_closing(in_jsx_child);
-                self.lexer.no_expression_in_jsx_children = prev_no_expression;
-                result
-            };
-            #[cfg(not(feature = "astro"))]
             let (children, closing) = self.parse_jsx_children_and_closing(in_jsx_child);
 
             let closing_element = match closing {
@@ -166,79 +113,6 @@ impl<'a> ParserImpl<'a> {
 
     /// `JSXOpeningElement` :
     /// < `JSXElementName` `JSXAttributes_opt` >
-    ///
-    /// Returns (opening_element, self_closing) for regular JSX.
-    /// Returns (opening_element, self_closing, is_raw_text_element) for Astro.
-    #[cfg(feature = "astro")]
-    fn parse_jsx_opening_element(
-        &mut self,
-        span: u32,
-        in_jsx_child: bool,
-    ) -> (
-        Box<'a, JSXOpeningElement<'a>>,
-        bool, // `true` if self-closing
-        bool, // `true` if raw text element (script/style) - Astro only
-        bool, // previous value of no_expression_in_jsx_children (to restore on close)
-    ) {
-        let name = self.parse_jsx_element_name();
-        // <Component<TsType> for tsx
-        let type_arguments = if self.is_ts { self.try_parse_type_arguments() } else { None };
-        let attributes = self.parse_jsx_attributes();
-        let explicit_self_closing = self.eat(Kind::Slash);
-
-        // In Astro, HTML void elements are implicitly self-closing even without `/`
-        let self_closing = explicit_self_closing
-            || (self.source_type.is_astro() && Self::is_astro_void_element(&name));
-
-        // Check if this is a raw text element (script/style) in Astro
-        // Also check for is:raw attribute which makes any element treat content as raw
-        let is_raw_text = self.source_type.is_astro()
-            && (Self::is_astro_raw_text_element(&name) || Self::has_is_raw_attribute(&attributes));
-
-        // For foreign content elements like <math>, set the no-expression flag BEFORE
-        // advancing past `>`, because `expect_jsx_child` calls `next_jsx_child()` which
-        // would otherwise tokenize `{` as LCurly instead of text.
-        let is_foreign = Self::is_foreign_content_element(&name);
-        let prev_no_expression = self.lexer.no_expression_in_jsx_children;
-        if is_foreign && !self_closing {
-            self.lexer.no_expression_in_jsx_children = true;
-        }
-
-        // For raw text elements, we must NOT call next_token() or next_jsx_child()
-        // because the content should not be parsed as JSX/JS. We just check for `>`
-        // without advancing, then record prev_token_end manually.
-        // The caller (skip_astro_raw_text_element_content) will reposition the lexer.
-        if is_raw_text && !explicit_self_closing {
-            self.expect_without_advance(Kind::RAngle);
-            // Manually update prev_token_end to point after the `>`
-            self.prev_token_end = self.cur_token().span().end;
-        } else if !self_closing || in_jsx_child {
-            // For non-self-closing elements OR when inside JSX children,
-            // use expect_jsx_child to advance in JSX child mode.
-            // This correctly handles:
-            // - `<div>...</div>` (needs to parse children)
-            // - Void elements like `<br>` inside JSX children (lexer stays in JSX mode)
-            self.expect_jsx_child(Kind::RAngle);
-        } else {
-            // For self-closing elements at top level (not inside JSX children),
-            // use regular expect to return to expression mode.
-            // This correctly handles:
-            // - `<br/>` (explicit self-close)
-            // - `<br>` in expressions like `{<br>}` (void element, returns to JS mode)
-            self.expect(Kind::RAngle);
-        }
-        let elem = self.ast.alloc_jsx_opening_element(
-            self.end_span(span),
-            name,
-            type_arguments,
-            attributes,
-        );
-        (elem, self_closing, is_raw_text, prev_no_expression)
-    }
-
-    /// `JSXOpeningElement` :
-    /// < `JSXElementName` `JSXAttributes_opt` >
-    #[cfg(not(feature = "astro"))]
     fn parse_jsx_opening_element(
         &mut self,
         span: u32,
@@ -276,14 +150,7 @@ impl<'a> ParserImpl<'a> {
         let identifier = self.parse_jsx_identifier();
 
         // <namespace:property />
-        // In Astro, namespaced element names are not supported - `:attr` is an attribute syntax.
-        // Only parse namespaced names in non-Astro JSX.
-        #[cfg(feature = "astro")]
-        let allow_namespaced = !self.source_type.is_astro();
-        #[cfg(not(feature = "astro"))]
-        let allow_namespaced = true;
-
-        if allow_namespaced && self.eat(Kind::Colon) {
+        if self.eat(Kind::Colon) {
             let property = self.parse_jsx_identifier();
             return self.ast.jsx_element_name_namespaced_name(
                 self.end_span(span),
@@ -332,7 +199,7 @@ impl<'a> ParserImpl<'a> {
     /// `JSXMemberExpression` :
     /// `JSXIdentifier` . `JSXIdentifier`
     /// `JSXMemberExpression` . `JSXIdentifier`
-    fn parse_jsx_member_expression(
+    pub(crate) fn parse_jsx_member_expression(
         &mut self,
         span: u32,
         object: &JSXIdentifier<'a>,
@@ -405,24 +272,8 @@ impl<'a> ParserImpl<'a> {
 
                     // <ident open nested element
                     if kind == Kind::Ident || kind.is_any_keyword() {
-                        // In Astro, check for <script> which needs special handling
-                        #[cfg(feature = "astro")]
-                        if self.source_type.is_astro() && self.cur_src() == "script" {
-                            children.push(self.parse_astro_script_in_jsx(span));
-                            continue;
-                        }
                         children.push(JSXChild::Element(self.parse_jsx_element(span, true)));
                         continue;
-                    }
-
-                    // <! in Astro - HTML comment or doctype
-                    #[cfg(feature = "astro")]
-                    if self.source_type.is_astro() && kind == Kind::Bang {
-                        if let Some(child) = self.parse_html_comment_in_jsx(span) {
-                            children.push(child);
-                            continue;
-                        }
-                        return (children, self.unexpected());
                     }
 
                     // </ closing tag - parse it inline and return
@@ -497,16 +348,6 @@ impl<'a> ParserImpl<'a> {
         span_start: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXExpressionContainer<'a>> {
-        // In Astro mode with JSX children starting with `<`, parse as potential JSX children directly.
-        // This allows: { <div>1</div> <div>2</div> } without explicit fragments.
-        // We must detect this BEFORE calling parse_expr() because parse_expr() would
-        // misinterpret the `<` after the first element as a binary comparison operator.
-        #[cfg(feature = "astro")]
-        if self.source_type.is_astro() && in_jsx_child && self.at(Kind::LAngle) {
-            let expr = self.parse_astro_jsx_children_in_expression(span_start);
-            return self.ast.alloc_jsx_expression_container(self.end_span(span_start), expr);
-        }
-
         let expr = if self.at(Kind::RCurly) {
             if in_jsx_child {
                 self.expect_jsx_child(Kind::RCurly);
@@ -517,12 +358,7 @@ impl<'a> ParserImpl<'a> {
 
             // Empty expression is not allowed in JSX attribute value
             // e.g. `<C attr={} />`
-            // In Astro mode, empty expressions are allowed
-            #[cfg(feature = "astro")]
-            let skip_error = self.source_type.is_astro();
-            #[cfg(not(feature = "astro"))]
-            let skip_error = false;
-            if !in_jsx_child && !skip_error {
+            if !in_jsx_child {
                 self.error(diagnostics::jsx_attribute_value_empty_expression(span));
             }
 
@@ -559,8 +395,6 @@ impl<'a> ParserImpl<'a> {
     ///   `JSXAttribute` `JSXAttributes_opt`
     pub(crate) fn parse_jsx_attributes(&mut self) -> Vec<'a, JSXAttributeItem<'a>> {
         let mut attributes = self.ast.vec();
-        #[cfg(feature = "astro")]
-        let is_astro = self.source_type.is_astro();
         loop {
             let kind = self.cur_kind();
             if matches!(kind, Kind::Eof | Kind::LAngle | Kind::RAngle | Kind::Slash)
@@ -578,35 +412,9 @@ impl<'a> ParserImpl<'a> {
                         self.bump_any(); // bump `}`
                         continue;
                     }
-                    // In Astro, `{prop}` can be shorthand for `prop={prop}`
-                    #[cfg(feature = "astro")]
-                    if is_astro && let Some(attr) = self.try_parse_astro_shorthand_attribute() {
-                        attributes.push(JSXAttributeItem::Attribute(attr));
-                        continue;
-                    }
                     JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
                 }
-                // In Astro, quotes can appear in attribute names (e.g., `<div '"attr />`).
-                // The regular lexer incorrectly tokenizes these as strings (or unterminated
-                // strings which become `Undetermined`). Pop any lexer error from the failed
-                // string tokenization, then re-lex as an Astro attribute name.
-                #[cfg(feature = "astro")]
-                Kind::Str | Kind::Undetermined if is_astro => {
-                    // Pop the "unterminated string" error that the lexer added
-                    self.lexer.errors.pop();
-                    JSXAttributeItem::Attribute(self.parse_astro_attribute())
-                }
-                _ => {
-                    // In Astro, use permissive attribute name parsing
-                    #[cfg(feature = "astro")]
-                    if is_astro {
-                        JSXAttributeItem::Attribute(self.parse_astro_attribute())
-                    } else {
-                        JSXAttributeItem::Attribute(self.parse_jsx_attribute())
-                    }
-                    #[cfg(not(feature = "astro"))]
-                    JSXAttributeItem::Attribute(self.parse_jsx_attribute())
-                }
+                _ => JSXAttributeItem::Attribute(self.parse_jsx_attribute()),
             };
             attributes.push(attribute);
         }
@@ -629,7 +437,7 @@ impl<'a> ParserImpl<'a> {
 
     /// `JSXSpreadAttribute` :
     ///   { ... `AssignmentExpression` }
-    fn parse_jsx_spread_attribute(&mut self) -> Box<'a, JSXSpreadAttribute<'a>> {
+    pub(crate) fn parse_jsx_spread_attribute(&mut self) -> Box<'a, JSXSpreadAttribute<'a>> {
         let span = self.start_span();
         self.bump_any(); // bump `{`
         self.expect(Kind::Dot3);
@@ -684,7 +492,7 @@ impl<'a> ParserImpl<'a> {
     ///   `IdentifierStart`
     ///   `JSXIdentifier` `IdentifierPart`
     ///   `JSXIdentifier` [no `WhiteSpace` or Comment here] -
-    fn parse_jsx_identifier(&mut self) -> JSXIdentifier<'a> {
+    pub(crate) fn parse_jsx_identifier(&mut self) -> JSXIdentifier<'a> {
         let span = self.start_span();
         let kind = self.cur_kind();
         if kind != Kind::Ident && !kind.is_any_keyword() {
