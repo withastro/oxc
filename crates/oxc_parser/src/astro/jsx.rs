@@ -133,8 +133,7 @@ impl<'a> ParserImpl<'a> {
                 let closing_span = self.start_span();
                 self.bump_any(); // bump `<`
                 self.bump_any(); // bump `/`
-                let closing =
-                    self.parse_astro_jsx_closing_inline(closing_span, in_jsx_child);
+                let closing = self.parse_astro_jsx_closing_inline(closing_span, in_jsx_child);
                 (children, closing)
             } else {
                 let result = self.parse_astro_jsx_children_and_closing(in_jsx_child);
@@ -184,8 +183,7 @@ impl<'a> ParserImpl<'a> {
         let explicit_self_closing = self.eat(Kind::Slash);
 
         // HTML void elements are implicitly self-closing even without `/`
-        let self_closing =
-            explicit_self_closing || Self::is_astro_void_element(&name);
+        let self_closing = explicit_self_closing || Self::is_astro_void_element(&name);
 
         // Check if this is a raw text element
         let is_raw_text =
@@ -284,8 +282,7 @@ impl<'a> ParserImpl<'a> {
                             children.push(self.parse_astro_script_in_jsx(span));
                             continue;
                         }
-                        children
-                            .push(JSXChild::Element(self.parse_astro_jsx_element(span, true)));
+                        children.push(JSXChild::Element(self.parse_astro_jsx_element(span, true)));
                         continue;
                     }
 
@@ -301,8 +298,7 @@ impl<'a> ParserImpl<'a> {
                     // </ closing tag
                     if kind == Kind::Slash {
                         self.bump_any(); // bump `/`
-                        let closing =
-                            self.parse_astro_jsx_closing_inline(span, in_jsx_child);
+                        let closing = self.parse_astro_jsx_closing_inline(span, in_jsx_child);
                         return (children, closing);
                     }
 
@@ -977,32 +973,28 @@ impl<'a> ParserImpl<'a> {
 
         if let Some(rest) = self.source_text.get(start_pos..)
             && rest.starts_with("!--")
+            && let Some(end_offset) = rest.find("-->")
         {
-            if let Some(end_offset) = rest.find("-->") {
-                let comment_end = (start_pos + end_offset + 3) as u32;
-                let comment_start = span;
+            let comment_end = (start_pos + end_offset + 3) as u32;
+            let comment_start = span;
 
-                let content = &rest[3..end_offset];
-                let value = oxc_span::Atom::from(content);
+            let content = &rest[3..end_offset];
+            let value = oxc_span::Atom::from(content);
 
-                let comment_span = oxc_span::Span::new(comment_start, comment_end);
-                let comment = self.ast.alloc_astro_comment(comment_span, value);
+            let comment_span = oxc_span::Span::new(comment_start, comment_end);
+            let comment = self.ast.alloc_astro_comment(comment_span, value);
 
-                self.lexer.set_position_for_astro(comment_end);
-                self.token = self.lexer.next_jsx_child();
+            self.lexer.set_position_for_astro(comment_end);
+            self.token = self.lexer.next_jsx_child();
 
-                return Some(JSXChild::AstroComment(comment));
-            }
+            return Some(JSXChild::AstroComment(comment));
         }
 
         None
     }
 
     /// Parse JSX children in an expression container (Astro-specific).
-    fn parse_astro_jsx_children_in_expression(
-        &mut self,
-        span_start: u32,
-    ) -> JSXExpression<'a> {
+    fn parse_astro_jsx_children_in_expression(&mut self, span_start: u32) -> JSXExpression<'a> {
         let fragment_span_start = span_start + 1;
         let mut children = self.ast.vec();
 
