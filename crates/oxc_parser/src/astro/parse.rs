@@ -76,7 +76,8 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
     Some(AstroFrontmatterInfo { content_start, content_end, frontmatter_end, body_start })
 }
 
-/// Find the position of the closing `---` fence, skipping over strings, template literals, and comments.
+/// Find the position of the closing `---` fence, skipping over strings, template literals,
+/// comments, and regex literals.
 ///
 /// This uses a simple state machine to track whether we're inside:
 /// - Single-quoted strings ('...')
@@ -84,6 +85,7 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
 /// - Template literals (`...`)
 /// - Line comments (// ...)
 /// - Block comments (/* ... */)
+/// - Regex literals (/.../)
 ///
 /// Returns the byte offset of the closing `---` in the search area, or None if not found.
 fn find_closing_fence(search_area: &str) -> Option<usize> {
@@ -95,12 +97,22 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
         TemplateLiteral,
         LineComment,
         BlockComment,
+        Regex,
+        /// Inside a character class `[...]` within a regex literal.
+        RegexCharClass,
     }
 
     let bytes = search_area.as_bytes();
     let len = bytes.len();
     let mut state = State::Normal;
     let mut i = 0;
+
+    // Track whether a `/` should be interpreted as starting a regex literal vs division.
+    // After these characters, `/` is the start of a regex literal:
+    //   punctuation/operators that cannot end an expression value.
+    // After identifiers, numbers, `)`, `]`, `++`, `--`, `/` is division.
+    // We track this with a simple flag: `true` means the next `/` could be a regex start.
+    let mut slash_is_regex = true;
 
     while i < len {
         let b = bytes[i];
@@ -112,25 +124,50 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     return Some(i);
                 }
 
-                // Check for string/comment starts
+                // Check for string/comment/regex starts
                 match b {
-                    b'\'' => state = State::SingleQuote,
-                    b'"' => state = State::DoubleQuote,
-                    b'`' => state = State::TemplateLiteral,
-                    b'/' if i + 1 < len => {
-                        match bytes[i + 1] {
-                            b'/' => {
-                                state = State::LineComment;
-                                i += 1; // Skip the second '/'
-                            }
-                            b'*' => {
-                                state = State::BlockComment;
-                                i += 1; // Skip the '*'
-                            }
-                            _ => {}
-                        }
+                    b'\'' => {
+                        state = State::SingleQuote;
+                        slash_is_regex = true;
                     }
-                    _ => {}
+                    b'"' => {
+                        state = State::DoubleQuote;
+                        slash_is_regex = true;
+                    }
+                    b'`' => {
+                        state = State::TemplateLiteral;
+                        slash_is_regex = true;
+                    }
+                    b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
+                        state = State::LineComment;
+                        i += 1; // Skip the second '/'
+                    }
+                    b'/' if i + 1 < len && bytes[i + 1] == b'*' => {
+                        state = State::BlockComment;
+                        i += 1; // Skip the '*'
+                    }
+                    b'/' if slash_is_regex => {
+                        state = State::Regex;
+                    }
+                    // Characters that indicate the next `/` is a regex (not division):
+                    // operators, punctuation, keywords that precede expressions
+                    b'=' | b'(' | b'[' | b'{' | b'}' | b';' | b',' | b'!' | b'&' | b'|' | b'^'
+                    | b'~' | b'?' | b':' | b'<' | b'>' | b'+' | b'-' | b'*' | b'%' | b'\n'
+                    | b'\r' => {
+                        slash_is_regex = true;
+                    }
+                    // After identifiers, numbers, `)`, `]`, `/` is division
+                    b')' | b']' => {
+                        slash_is_regex = false;
+                    }
+                    b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => {
+                        slash_is_regex = false;
+                    }
+                    // Whitespace doesn't change the slash_is_regex flag
+                    b' ' | b'\t' => {}
+                    _ => {
+                        slash_is_regex = true;
+                    }
                 }
             }
 
@@ -140,8 +177,12 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     i += 1;
                 } else if b == b'\'' {
                     state = State::Normal;
+                    slash_is_regex = false;
+                } else if b == b'\n' || b == b'\r' {
+                    // Newline ends single-quote string (syntax error in JS, but we recover)
+                    state = State::Normal;
+                    slash_is_regex = true;
                 }
-                // Note: newline ends single-quote string (syntax error in JS, but we continue)
             }
 
             State::DoubleQuote => {
@@ -150,8 +191,12 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     i += 1;
                 } else if b == b'"' {
                     state = State::Normal;
+                    slash_is_regex = false;
+                } else if b == b'\n' || b == b'\r' {
+                    // Newline ends double-quote string (syntax error in JS, but we recover)
+                    state = State::Normal;
+                    slash_is_regex = true;
                 }
-                // Note: newline ends double-quote string (syntax error in JS, but we continue)
             }
 
             State::TemplateLiteral => {
@@ -160,6 +205,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     i += 1;
                 } else if b == b'`' {
                     state = State::Normal;
+                    slash_is_regex = false;
                 }
                 // Note: template literals CAN span multiple lines, so no newline handling
                 // We also don't track ${...} interpolations - `---` inside interpolation
@@ -170,6 +216,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 // Line comment ends at newline
                 if b == b'\n' {
                     state = State::Normal;
+                    slash_is_regex = true;
                 }
             }
 
@@ -178,6 +225,42 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
                     state = State::Normal;
                     i += 1; // Skip the '/'
+                    // Don't change slash_is_regex - preserve the context from before the comment
+                }
+            }
+
+            State::Regex => {
+                if b == b'\\' && i + 1 < len {
+                    // Skip escaped character in regex
+                    i += 1;
+                } else if b == b'[' {
+                    // Enter character class - `/` inside `[...]` doesn't end the regex
+                    state = State::RegexCharClass;
+                } else if b == b'/' {
+                    // End of regex literal - skip optional flags (g, i, m, s, u, v, y, d)
+                    state = State::Normal;
+                    slash_is_regex = false;
+                    while i + 1 < len && bytes[i + 1].is_ascii_alphabetic() {
+                        i += 1;
+                    }
+                } else if b == b'\n' || b == b'\r' {
+                    // Regex can't span lines - this was actually a division, recover
+                    state = State::Normal;
+                    slash_is_regex = true;
+                }
+            }
+
+            State::RegexCharClass => {
+                if b == b'\\' && i + 1 < len {
+                    // Skip escaped character in character class
+                    i += 1;
+                } else if b == b']' {
+                    // End of character class, back to regex body
+                    state = State::Regex;
+                } else if b == b'\n' || b == b'\r' {
+                    // Regex can't span lines - recover
+                    state = State::Normal;
+                    slash_is_regex = true;
                 }
             }
         }
