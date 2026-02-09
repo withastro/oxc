@@ -427,7 +427,7 @@ impl<'a> ParserImpl<'a> {
 #[cfg(test)]
 mod test {
     use oxc_allocator::Allocator;
-    use oxc_ast::ast::{JSXChild, JSXElementName, Statement};
+    use oxc_ast::ast::{JSXChild, JSXElementName, JSXExpression, Statement};
     use oxc_span::{GetSpan, SourceType};
 
     use crate::Parser;
@@ -3978,6 +3978,170 @@ export async function getStaticPaths() {
             let has_expression =
                 el.children.iter().any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
             assert!(has_expression, "{{expr}} inside <svg> should be an expression, not text");
+        }
+    }
+
+    #[test]
+    fn parse_astro_empty_attribute_expression() {
+        // Empty expression in attribute value should be allowed in Astro (no TS17000 error)
+        let source = r#"<body attr={}></body>"#;
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(
+            ret.errors.is_empty(),
+            "empty attribute expression should not produce errors in Astro: {:?}",
+            ret.errors
+        );
+    }
+
+    #[test]
+    fn parse_astro_multiple_jsx_children_in_expression() {
+        // Multiple JSX elements inside a child expression container should be
+        // wrapped into a synthetic fragment.
+        let source = "<div>{<span>A</span><span>B</span>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // The div should have one child: an expression container holding a fragment
+        if let JSXChild::Element(div) = &ret.root.body[0] {
+            assert_eq!(div.children.len(), 1, "div should have one expression container child");
+            if let JSXChild::ExpressionContainer(container) = &div.children[0] {
+                assert!(
+                    matches!(container.expression, JSXExpression::JSXFragment(_)),
+                    "expression should be a synthetic fragment wrapping multiple children"
+                );
+                if let JSXExpression::JSXFragment(ref frag) = container.expression {
+                    assert_eq!(frag.children.len(), 2, "fragment should have 2 children");
+                }
+            } else {
+                panic!("expected ExpressionContainer child");
+            }
+        } else {
+            panic!("expected Element at root");
+        }
+    }
+
+    #[test]
+    fn parse_astro_single_jsx_child_in_expression() {
+        // A single JSX element inside a child expression container should be
+        // unwrapped (no synthetic fragment).
+        let source = "<div>{<span>A</span>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::Element(div) = &ret.root.body[0] {
+            assert_eq!(div.children.len(), 1);
+            if let JSXChild::ExpressionContainer(container) = &div.children[0] {
+                assert!(
+                    matches!(container.expression, JSXExpression::JSXElement(_)),
+                    "single JSX child should be unwrapped as JSXElement, not wrapped in fragment"
+                );
+            } else {
+                panic!("expected ExpressionContainer child");
+            }
+        } else {
+            panic!("expected Element at root");
+        }
+    }
+
+    #[test]
+    fn parse_astro_jsx_children_with_text_in_expression() {
+        // Mixed JSX elements and text inside a child expression container
+        let source = "<div>{<span>A</span> text <span>B</span>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::Element(div) = &ret.root.body[0] {
+            if let JSXChild::ExpressionContainer(container) = &div.children[0] {
+                if let JSXExpression::JSXFragment(ref frag) = container.expression {
+                    // element, text, element = 3 children
+                    assert_eq!(
+                        frag.children.len(),
+                        3,
+                        "fragment should have 3 children (element, text, element)"
+                    );
+                    assert!(matches!(frag.children[0], JSXChild::Element(_)));
+                    assert!(matches!(frag.children[1], JSXChild::Text(_)));
+                    assert!(matches!(frag.children[2], JSXChild::Element(_)));
+                } else {
+                    panic!("expected fragment for multiple children");
+                }
+            } else {
+                panic!("expected ExpressionContainer child");
+            }
+        } else {
+            panic!("expected Element at root");
+        }
+    }
+
+    #[test]
+    fn parse_astro_fragment_child_in_expression() {
+        // A fragment inside a child expression container
+        let source = "<div>{<>A<span>B</span></>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::Element(div) = &ret.root.body[0] {
+            if let JSXChild::ExpressionContainer(container) = &div.children[0] {
+                assert!(
+                    matches!(container.expression, JSXExpression::JSXFragment(_)),
+                    "single fragment child should be unwrapped as JSXFragment"
+                );
+            } else {
+                panic!("expected ExpressionContainer child");
+            }
+        } else {
+            panic!("expected Element at root");
+        }
+    }
+
+    #[test]
+    fn parse_astro_nested_expressions_in_jsx_children() {
+        // Nested expression containers inside multi-child JSX expressions
+        let source = "<div>{<span>{value}</span><p>{other}</p>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        if let JSXChild::Element(div) = &ret.root.body[0] {
+            if let JSXChild::ExpressionContainer(container) = &div.children[0] {
+                if let JSXExpression::JSXFragment(ref frag) = container.expression {
+                    assert_eq!(frag.children.len(), 2, "fragment should have 2 element children");
+                    // Verify each child element has its own expression container
+                    for child in &frag.children {
+                        if let JSXChild::Element(el) = child {
+                            let has_expr = el
+                                .children
+                                .iter()
+                                .any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
+                            assert!(has_expr, "each child element should contain an expression");
+                        } else {
+                            panic!("expected Element children in fragment");
+                        }
+                    }
+                } else {
+                    panic!("expected fragment");
+                }
+            } else {
+                panic!("expected ExpressionContainer child");
+            }
+        } else {
+            panic!("expected Element at root");
         }
     }
 }

@@ -578,6 +578,15 @@ impl<'a> ParserImpl<'a> {
                 let str_lit = self.ast.string_literal(self.end_span(span), value, None);
                 JSXAttributeValue::StringLiteral(self.alloc(str_lit))
             }
+            Kind::LCurly => {
+                let span_start = self.start_span();
+                self.bump_any(); // bump `{`
+                let expr = self.parse_astro_jsx_expression_container(
+                    span_start,
+                    /* in_jsx_child */ false,
+                );
+                JSXAttributeValue::ExpressionContainer(expr)
+            }
             _ => self.parse_jsx_attribute_value(),
         }
     }
