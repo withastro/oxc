@@ -113,9 +113,9 @@ impl<'a> ParserImpl<'a> {
                 }
 
                 // `{expr}` - expression
-                Some(JSXChild::ExpressionContainer(
-                    self.parse_astro_jsx_expression_container(span_start, /* in_jsx_child */ true),
-                ))
+                Some(JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
+                    span_start, /* in_jsx_child */ true,
+                )))
             }
             Kind::JSXText => Some(JSXChild::Text(self.parse_jsx_text())),
             Kind::Eof => None,
@@ -3984,7 +3984,7 @@ export async function getStaticPaths() {
     #[test]
     fn parse_astro_empty_attribute_expression() {
         // Empty expression in attribute value should be allowed in Astro (no TS17000 error)
-        let source = r#"<body attr={}></body>"#;
+        let source = r"<body attr={}></body>";
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
