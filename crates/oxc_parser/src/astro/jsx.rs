@@ -582,8 +582,7 @@ impl<'a> ParserImpl<'a> {
                 let span_start = self.start_span();
                 self.bump_any(); // bump `{`
                 let expr = self.parse_astro_jsx_expression_container(
-                    span_start,
-                    /* in_jsx_child */ false,
+                    span_start, /* in_jsx_child */ false,
                 );
                 JSXAttributeValue::ExpressionContainer(expr)
             }
