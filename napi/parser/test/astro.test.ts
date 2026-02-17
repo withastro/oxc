@@ -1,12 +1,7 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { parseAstro, parseAstroSync } from "../src-js/index.js";
-import type {
-  AstroParserOptions,
-  AstroRoot,
-  AstroFrontmatter,
-  AstroScript,
-} from "../src-js/index.js";
+import type { AstroRoot, AstroScript } from "../src-js/index.js";
 
 describe("parseAstro", () => {
   it("parses basic Astro file with frontmatter", () => {
@@ -165,7 +160,7 @@ const items = await getItems();
 
   it("reports syntax errors in frontmatter", () => {
     const code = `---
-const x = 
+const x =
 ---
 <div>test</div>`;
 
