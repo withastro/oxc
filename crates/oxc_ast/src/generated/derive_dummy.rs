@@ -2047,7 +2047,7 @@ impl<'a> Dummy<'a> for JSXIdentifier<'a> {
 impl<'a> Dummy<'a> for JSXChild<'a> {
     /// Create a dummy [`JSXChild`].
     ///
-    /// Has cost of making 1 allocation (40 bytes).
+    /// Has cost of making 1 allocation (24 bytes).
     fn dummy(allocator: &'a Allocator) -> Self {
         Self::AstroDoctype(Dummy::dummy(allocator))
     }

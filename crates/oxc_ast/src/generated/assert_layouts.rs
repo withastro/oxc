@@ -1825,13 +1825,13 @@ const _: () = {
     assert!(offset_of!(AstroRoot, body) == 16);
 
     // Padding: 0 bytes
-    assert!(size_of::<AstroFrontmatter>() == 136);
+    assert!(size_of::<AstroFrontmatter>() == 152);
     assert!(align_of::<AstroFrontmatter>() == 8);
     assert!(offset_of!(AstroFrontmatter, span) == 0);
     assert!(offset_of!(AstroFrontmatter, program) == 8);
 
     // Padding: 0 bytes
-    assert!(size_of::<AstroScript>() == 136);
+    assert!(size_of::<AstroScript>() == 152);
     assert!(align_of::<AstroScript>() == 8);
     assert!(offset_of!(AstroScript, span) == 0);
     assert!(offset_of!(AstroScript, program) == 8);
@@ -3667,13 +3667,13 @@ const _: () = if cfg!(target_family = "wasm") || align_of::<u64>() == 8 {
     assert!(offset_of!(AstroRoot, body) == 12);
 
     // Padding: 0 bytes
-    assert!(size_of::<AstroFrontmatter>() == 96);
+    assert!(size_of::<AstroFrontmatter>() == 104);
     assert!(align_of::<AstroFrontmatter>() == 4);
     assert!(offset_of!(AstroFrontmatter, span) == 0);
     assert!(offset_of!(AstroFrontmatter, program) == 8);
 
     // Padding: 0 bytes
-    assert!(size_of::<AstroScript>() == 96);
+    assert!(size_of::<AstroScript>() == 104);
     assert!(align_of::<AstroScript>() == 4);
     assert!(offset_of!(AstroScript, span) == 0);
     assert!(offset_of!(AstroScript, program) == 8);

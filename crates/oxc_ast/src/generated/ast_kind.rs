@@ -630,6 +630,11 @@ impl AstKind<'_> {
             Self::JSDocNullableType(it) => it.node_id(),
             Self::JSDocNonNullableType(it) => it.node_id(),
             Self::JSDocUnknownType(it) => it.node_id(),
+            Self::AstroRoot(_) => NodeId::DUMMY,
+            Self::AstroFrontmatter(_) => NodeId::DUMMY,
+            Self::AstroScript(_) => NodeId::DUMMY,
+            Self::AstroDoctype(_) => NodeId::DUMMY,
+            Self::AstroComment(_) => NodeId::DUMMY,
         }
     }
 
@@ -829,6 +834,11 @@ impl AstKind<'_> {
             Self::JSDocNullableType(it) => it.set_node_id(node_id),
             Self::JSDocNonNullableType(it) => it.set_node_id(node_id),
             Self::JSDocUnknownType(it) => it.set_node_id(node_id),
+            Self::AstroRoot(_) => {}
+            Self::AstroFrontmatter(_) => {}
+            Self::AstroScript(_) => {}
+            Self::AstroDoctype(_) => {}
+            Self::AstroComment(_) => {}
         }
     }
 }
