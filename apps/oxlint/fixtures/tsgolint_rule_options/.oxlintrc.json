@@ -44,6 +44,54 @@
         "allowOptionalChaining": true
       }
     ],
+    "typescript/no-unnecessary-condition": [
+      "error",
+      {
+        "allowConstantLoopConditions": true,
+        "checkTypePredicates": false,
+      }
+    ],
+    "typescript/consistent-type-exports": [
+      "error",
+      {
+        "fixMixedExportsWithInlineTypeSpecifier": true
+      }
+    ],
+    "typescript/strict-void-return": [
+      "error",
+      {
+        "allowReturnAny": true
+      }
+    ],
+    "typescript/consistent-return": [
+      "error",
+      {
+        "treatUndefinedAsUnspecified": true
+      }
+    ],
+    "typescript/prefer-readonly-parameter-types": [
+      "error",
+      {
+        "allow": [
+          { "from": "file", "name": "RegExp" }
+        ],
+        "checkParameterProperties": false,
+        "ignoreInferredTypes": true,
+        "treatMethodsAsReadonly": true
+      }
+    ],
+    "typescript/prefer-readonly": [
+      "error",
+      {
+        "onlyInlineLambdas": true
+      }
+    ],
+    "typescript/prefer-string-starts-ends-with": [
+      "error",
+      {
+        "allowSingleElementEquality": "always"
+      }
+    ],
     "typescript/only-throw-error": [
       "error",
       {

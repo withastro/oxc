@@ -117,7 +117,9 @@ pub struct SemanticBuilder<'a> {
 
 /// Data returned by [`SemanticBuilder::build`].
 pub struct SemanticBuilderReturn<'a> {
+    /// Built semantic model.
     pub semantic: Semantic<'a>,
+    /// Diagnostics collected during semantic analysis.
     pub errors: Vec<OxcDiagnostic>,
 }
 
@@ -128,6 +130,7 @@ impl Default for SemanticBuilder<'_> {
 }
 
 impl<'a> SemanticBuilder<'a> {
+    /// Create a new semantic builder with default settings.
     pub fn new() -> Self {
         let scoping = Scoping::default();
         let current_scope_id = scoping.root_scope_id();
@@ -187,6 +190,7 @@ impl<'a> SemanticBuilder<'a> {
 
     #[cfg(not(feature = "cfg"))]
     #[must_use]
+    /// No-op when `cfg` feature is disabled.
     pub fn with_cfg(self, _cfg: bool) -> Self {
         self
     }
@@ -405,9 +409,7 @@ impl<'a> SemanticBuilder<'a> {
         includes: SymbolFlags,
         excludes: SymbolFlags,
     ) -> SymbolId {
-        if let Some(symbol_id) =
-            self.check_redeclaration(scope_id, span, name.as_str(), excludes, true)
-        {
+        if let Some(symbol_id) = self.check_redeclaration(scope_id, span, name, excludes, true) {
             self.add_redeclare_variable(symbol_id, includes, span);
             self.scoping.union_symbol_flag(symbol_id, includes);
             return symbol_id;
@@ -439,12 +441,12 @@ impl<'a> SemanticBuilder<'a> {
         &self,
         scope_id: ScopeId,
         span: Span,
-        name: &str,
+        name: Ident<'_>,
         excludes: SymbolFlags,
         report_error: bool,
     ) -> Option<SymbolId> {
         let symbol_id = self.scoping.get_binding(scope_id, name).or_else(|| {
-            self.hoisting_variables.get(&scope_id).and_then(|symbols| symbols.get(name).copied())
+            self.hoisting_variables.get(&scope_id).and_then(|symbols| symbols.get(&name).copied())
         })?;
 
         // `(function n(n) {})()`
@@ -467,7 +469,7 @@ impl<'a> SemanticBuilder<'a> {
             let flags = self.scoping.symbol_flags(symbol_id);
             if flags.intersects(excludes) {
                 let symbol_span = self.scoping.symbol_span(symbol_id);
-                self.error(redeclaration(name, symbol_span, span));
+                self.error(redeclaration(&name, symbol_span, span));
             }
         }
 
@@ -541,7 +543,7 @@ impl<'a> SemanticBuilder<'a> {
             // Try to resolve a reference.
             // If unresolved, transfer it to parent scope's unresolved references.
             let bindings = self.scoping.get_bindings(self.current_scope_id);
-            if let Some(symbol_id) = bindings.get(name.as_str()).copied() {
+            if let Some(symbol_id) = bindings.get(&name).copied() {
                 let symbol_flags = self.scoping.symbol_flags(symbol_id);
                 references.retain(|reference_id| {
                     let reference_id = *reference_id;
@@ -740,7 +742,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         let kind = AstKind::BreakStatement(self.alloc(stmt));
         self.enter_node(kind);
         if let Some(label) = &stmt.label {
-            self.unused_labels.reference(label.name.as_str());
+            self.unused_labels.reference(label.name);
         }
 
         /* cfg */
@@ -836,7 +838,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         let kind = AstKind::ContinueStatement(self.alloc(stmt));
         self.enter_node(kind);
         if let Some(label) = &stmt.label {
-            self.unused_labels.reference(label.name.as_str());
+            self.unused_labels.reference(label.name);
         }
 
         /* cfg */
@@ -1392,7 +1394,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         let kind = AstKind::LabeledStatement(self.alloc(stmt));
         self.enter_node(kind);
         control_flow!(self, |cfg| cfg.enter_statement(self.current_node_id));
-        self.unused_labels.add(stmt.label.name.as_str(), self.current_node_id);
+        self.unused_labels.add(stmt.label.name, self.current_node_id);
 
         /* cfg */
         #[cfg(feature = "cfg")]

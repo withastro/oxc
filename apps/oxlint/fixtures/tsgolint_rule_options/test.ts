@@ -62,6 +62,70 @@ declare const unknownValue: unknown;
 // This SHOULD error because checkUnknown is true
 const unknownStr = unknownValue.toString();
 
+// Test no-unnecessary-condition with allowConstantLoopConditions option
+declare const alwaysTruthyObject: object;
+// This SHOULD error because this object is always truthy
+if (alwaysTruthyObject) {
+  result += 1;
+}
+
+// This should NOT error because allowConstantLoopConditions is true
+while (true) {
+  break;
+}
+
+// Test consistent-type-exports with fixMixedExportsWithInlineTypeSpecifier option
+type ExportOnlyType = { value: number };
+const exportOnlyValue = 1;
+// This SHOULD error because ExportOnlyType is only used as a type.
+export { ExportOnlyType, exportOnlyValue };
+
+// Test strict-void-return with allowReturnAny option
+declare function takesVoidCallback(cb: () => void): void;
+declare const anyReturnValue: any;
+// This should NOT error because allowReturnAny is true
+takesVoidCallback(() => anyReturnValue);
+// This SHOULD error because returning string is not allowed in a void callback
+takesVoidCallback(() => 'not-void');
+
+// Test prefer-readonly-parameter-types options
+function takesAllowedType(input: RegExp): void {
+  console.log(input.source);
+}
+
+interface MutableParameter {
+  value: string;
+}
+
+// This SHOULD error because parameter type is mutable
+function takesMutableParameter(input: MutableParameter): void {
+  console.log(input.value);
+}
+
+// Test prefer-readonly with onlyInlineLambdas option
+class PreferReadonlyOptionExample {
+  private handler = () => 1;
+  getValue() {
+    return this.handler();
+  }
+}
+
+// Test prefer-string-starts-ends-with with allowSingleElementEquality option
+declare const boundaryText: string;
+// This should NOT error because single element equality is allowed
+const boundaryCharMatch = boundaryText[0] === 'a';
+// This SHOULD error because startsWith is preferred here
+const boundarySliceMatch = boundaryText.slice(0, 3) === 'foo';
+
+// Test consistent-return with treatUndefinedAsUnspecified option
+function maybeReturnValue(flag: boolean): string | undefined {
+  if (flag) {
+    return 'value';
+  }
+  // This SHOULD be treated as an unspecified return with the option enabled
+  return undefined;
+}
+
 // Test only-throw-error with allowRethrowing option
 // When allowRethrowing is false, rethrowing a caught error SHOULD error
 try {

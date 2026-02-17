@@ -6,7 +6,13 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 
-use crate::{AstNode, ast_util::is_method_call, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    ast_util::{is_method_call, leftmost_identifier_reference},
+    context::LintContext,
+    rule::Rule,
+    utils::is_import_symbol,
+};
 
 fn no_array_for_each_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not use `Array#forEach`")
@@ -68,6 +74,12 @@ impl Rule for NoArrayForEach {
         if is_method_call(call_expr, None, Some(&["forEach"]), None, None)
             && !member_expr.is_computed()
         {
+            if leftmost_identifier_reference(member_expr.object())
+                .is_ok_and(|ident| is_import_symbol(ident, "effect", "Effect", ctx))
+            {
+                return;
+            }
+
             let object = member_expr.object();
 
             match object {
@@ -107,6 +119,8 @@ fn test() {
         r"foo.notForEach(element => bar())",
         r"React.Children.forEach(children, (child) => {});",
         r"Children.forEach(children, (child) => {});",
+        r#"import { Effect } from "effect"; Effect.forEach([], () => {})"#,
+        r#"import { Effect as E } from "effect"; E.forEach([], () => {})"#,
     ];
 
     let fail = vec![
@@ -136,7 +150,6 @@ fn test() {
                 delete element;
                 console.log(element)
             }",
-            None::<()>,
         ),
         (
             "staticPages.forEach((pg) => allStaticPages.add(pg))
@@ -147,21 +160,18 @@ fn test() {
             pageInfos.forEach((info: PageInfo, key: string) => {
                 allPageInfos.set(key, info)
             })",
-            None,
         ),
         (
             "const cloakVals: string[] = [];
             elements.forEach(element => cloakVals.push(cloakElement(element)));",
             "const cloakVals: string[] = [];
             for (const element of elements) cloakVals.push(cloakElement(element));",
-            None,
         ),
         (
             "while (true) return;
             foo.forEach(element => bar(element));",
             "while (true) return;
             for (const element of foo) bar(element);",
-            None,
         ),
         (
             "foo.forEach(_ => {
@@ -170,7 +180,6 @@ fn test() {
             "for (const _ of foo) {
                 with (a)  { ({}); continue; }
             }",
-            None,
         ),
     ];
 

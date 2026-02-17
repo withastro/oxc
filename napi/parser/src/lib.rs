@@ -20,6 +20,7 @@ pub use types::*;
     feature = "allocator",
     not(any(
         target_arch = "arm",
+        target_os = "android",
         target_os = "freebsd",
         target_os = "windows",
         target_family = "wasm"

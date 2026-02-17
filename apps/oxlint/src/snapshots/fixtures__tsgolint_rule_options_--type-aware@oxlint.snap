@@ -38,9 +38,74 @@ working directory: fixtures/tsgolint_rule_options
     :                    ^^^^^^^^^^^^
  64 | 
     `----
+  help: Consider picking a property (e.g. `user.name`), using a formatter (or `JSON.stringify`), or implementing a custom `toString()`/`toLocaleString()` on the type.
 
-Found 0 warnings and 4 errors.
-Finished in <variable>ms on 1 file with 7 rules using 1 threads.
+  x typescript-eslint(no-unnecessary-condition): Unnecessary conditional, value is always truthy.
+    ,-[test.ts:68:5]
+ 67 | // This SHOULD error because this object is always truthy
+ 68 | if (alwaysTruthyObject) {
+    :     ^^^^^^^^^^^^^^^^^^
+ 69 |   result += 1;
+    `----
+
+  x typescript-eslint(consistent-type-exports): Type export ExportOnlyType is not a value and should be exported using `export type`.
+    ,-[test.ts:81:1]
+ 80 | // This SHOULD error because ExportOnlyType is only used as a type.
+ 81 | export { ExportOnlyType, exportOnlyValue };
+    : ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 82 | 
+    `----
+
+  x typescript-eslint(strict-void-return): Value returned in a context where a void return is expected.
+    ,-[test.ts:89:25]
+ 88 | // This SHOULD error because returning string is not allowed in a void callback
+ 89 | takesVoidCallback(() => 'not-void');
+    :                         ^^^^^^^^^^
+ 90 | 
+    `----
+
+  x typescript-eslint(prefer-readonly-parameter-types): Parameter should be a readonly type.
+    ,-[test.ts:92:27]
+ 91 | // Test prefer-readonly-parameter-types options
+ 92 | function takesAllowedType(input: RegExp): void {
+    :                           ^^^^^^^^^^^^^
+ 93 |   console.log(input.source);
+    `----
+
+  x typescript-eslint(prefer-readonly-parameter-types): Parameter should be a readonly type.
+     ,-[test.ts:101:32]
+ 100 | // This SHOULD error because parameter type is mutable
+ 101 | function takesMutableParameter(input: MutableParameter): void {
+     :                                ^^^^^^^^^^^^^^^^^^^^^^^
+ 102 |   console.log(input.value);
+     `----
+
+  x typescript-eslint(prefer-readonly): Member 'handler' is never reassigned; mark it as `readonly`.
+     ,-[test.ts:107:3]
+ 106 | class PreferReadonlyOptionExample {
+ 107 |   private handler = () => 1;
+     :   ^^^^^^^^^^^^^^^
+ 108 |   getValue() {
+     `----
+
+  x typescript-eslint(prefer-string-starts-ends-with): Use 'String#startsWith' method instead.
+     ,-[test.ts:118:28]
+ 117 | // This SHOULD error because startsWith is preferred here
+ 118 | const boundarySliceMatch = boundaryText.slice(0, 3) === 'foo';
+     :                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 119 | 
+     `----
+
+  x typescript-eslint(consistent-return): Function 'maybeReturnValue' expected a return value.
+     ,-[test.ts:126:3]
+ 125 |   // This SHOULD be treated as an unspecified return with the option enabled
+ 126 |   return undefined;
+     :   ^^^^^^^^^^^^^^^^^
+ 127 | }
+     `----
+
+Found 0 warnings and 12 errors.
+Finished in <variable>ms on 1 file with 14 rules using 1 threads.
 ----------
 CLI result: LintFoundErrors
 ----------

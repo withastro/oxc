@@ -4,7 +4,7 @@ use oxc_ast::{
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{GetSpan, Span};
+use oxc_span::{GetSpan, Span, ident::REQUIRE};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -233,7 +233,7 @@ impl Rule for NoCommonjs {
                     return;
                 }
 
-                if ctx.scoping().find_binding(ctx.scoping().root_scope_id(), "require").is_some() {
+                if ctx.scoping().find_binding(ctx.scoping().root_scope_id(), REQUIRE).is_some() {
                     return;
                 }
 

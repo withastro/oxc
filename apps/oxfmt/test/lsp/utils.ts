@@ -27,7 +27,9 @@ import type {
 const CLI_PATH = join(import.meta.dirname, "..", "..", "dist", "cli.js");
 
 export function createLspConnection() {
-  const proc = spawn("node", [CLI_PATH, "--lsp"]);
+  const proc = spawn("node", [CLI_PATH, "--lsp"], {
+    // env: { ...process.env, OXC_LOG: "info" }, for debugging
+  });
 
   const connection = createMessageConnection(
     new StreamMessageReader(proc.stdout),
@@ -107,8 +109,26 @@ export async function formatFixture(
   initializationOptions?: OxfmtLSPConfig,
 ): Promise<string> {
   const filePath = join(fixturesDir, fixturePath);
-  const dirPath = dirname(filePath);
   const fileUri = pathToFileURL(filePath).href;
+
+  return await formatFixtureContent(
+    fixturesDir,
+    fixturePath,
+    fileUri,
+    languageId,
+    initializationOptions,
+  );
+}
+
+export async function formatFixtureContent(
+  fixturesDir: string,
+  fixturePath: string,
+  fileUri: string,
+  languageId: string,
+  initializationOptions?: OxfmtLSPConfig,
+): Promise<string> {
+  const filePath = join(fixturesDir, fixturePath);
+  const dirPath = dirname(filePath);
   const content = await fs.readFile(filePath, "utf-8");
 
   await using client = createLspConnection();
@@ -157,7 +177,7 @@ export async function formatFixtureAfterConfigChange(
   ]);
   await client.didOpen(fileUri, languageId, content);
   const edits1 = await client.format(fileUri);
-  const formatted1 = applyEdits(content, edits1, languageId) ?? content;
+  const formatted1 = applyEdits(content, edits1, languageId);
   await client.didChange(fileUri, formatted1);
 
   // Re-format with second config
@@ -165,7 +185,7 @@ export async function formatFixtureAfterConfigChange(
     { workspaceUri: pathToFileURL(dirPath).href, options: configurationChangeOptions },
   ]);
   const edits2 = await client.format(fileUri);
-  const formatted2 = applyEdits(formatted1, edits2, languageId) ?? formatted1;
+  const formatted2 = applyEdits(formatted1, edits2, languageId);
 
   return `
 --- FILE -----------
@@ -187,8 +207,8 @@ type OxfmtLSPConfig = {
   "fmt.configPath"?: string | null;
 };
 
-function applyEdits(content: string, edits: TextEdit[] | null, languageId: string): string | null {
-  if (edits === null || edits.length === 0) return null;
+function applyEdits(content: string, edits: TextEdit[] | null, languageId: string): string {
+  if (edits === null || edits.length === 0) return content;
   const doc = TextDocument.create("file:///test", languageId, 1, content);
   return TextDocument.applyEdits(doc, edits);
 }

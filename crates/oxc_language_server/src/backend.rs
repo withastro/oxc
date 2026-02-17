@@ -21,7 +21,7 @@ use tower_lsp_server::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    ConcurrentHashMap, ToolBuilder,
+    ConcurrentHashMap, LanguageId, ToolBuilder,
     capabilities::{Capabilities, DiagnosticMode, server_capabilities},
     file_system::LSPFileSystem,
     options::WorkspaceOption,
@@ -220,6 +220,7 @@ impl LanguageServer for Backend {
             };
 
             let known_files = self.file_system.read().await.keys();
+            // will only be filled when using push diagnostic model
             let mut new_diagnostics = Vec::new();
 
             for (index, worker) in needed_configurations.values().copied().enumerate() {
@@ -230,13 +231,19 @@ impl LanguageServer for Backend {
 
                 // run diagnostics for all known files in the workspace of the worker.
                 // This is necessary because the worker was not started before.
+                // On Pull diagnostic model, we will ask the client to refresh diagnostics instead of sending them all.
+                if capabilities.diagnostic_mode != DiagnosticMode::Push {
+                    continue;
+                }
+
                 for uri in &known_files {
                     // Check if this worker is the most specific one for this URI
                     let responsible_worker = Self::find_worker_for_uri(workers, uri);
                     if responsible_worker.is_none_or(|w| !std::ptr::eq(w, worker)) {
                         continue;
                     }
-                    let content = self.file_system.read().await.get(uri);
+                    let content =
+                        self.file_system.read().await.get(uri).map(|(_, content)| content);
                     let diagnostics = worker.run_diagnostic(uri, content.as_deref()).await;
                     match diagnostics {
                         Err(err) => {
@@ -252,6 +259,18 @@ impl LanguageServer for Backend {
 
             if !new_diagnostics.is_empty() {
                 self.publish_all_diagnostics(new_diagnostics, ConcurrentHashMap::default()).await;
+            } else if capabilities.diagnostic_mode == DiagnosticMode::Pull
+                && !needed_configurations.is_empty()
+            {
+                debug_assert!(
+                    capabilities.refresh_diagnostics,
+                    "pull mode requires refresh diagnostics capability"
+                );
+
+                // In pull diagnostic model, we ask the client to refresh diagnostics
+                if let Err(err) = self.client.workspace_diagnostic_refresh().await {
+                    warn!("sending workspace/diagnostic/refresh failed: {err}");
+                }
             }
         }
 
@@ -641,7 +660,11 @@ impl LanguageServer for Backend {
 
         let content = params.text_document.text;
 
-        self.file_system.write().await.set(uri.clone(), content.clone());
+        self.file_system.write().await.set_with_language(
+            uri.clone(),
+            LanguageId::new(params.text_document.language_id),
+            content.clone(),
+        );
 
         if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
             match worker.run_diagnostic(&uri, Some(&content)).await {
@@ -739,8 +762,9 @@ impl LanguageServer for Backend {
                 RelatedFullDocumentDiagnosticReport::default(),
             )));
         };
-        let diagnostics =
-            worker.run_diagnostic(uri, self.file_system.read().await.get(uri).as_deref()).await;
+
+        let content = self.file_system.read().await.get(uri).map(|(_, content)| content);
+        let diagnostics = worker.run_diagnostic(uri, content.as_deref()).await;
 
         let diagnostics = match diagnostics {
             Err(err) => {
@@ -802,7 +826,13 @@ impl LanguageServer for Backend {
         let Some(worker) = Self::find_worker_for_uri(&workers, uri) else {
             return Ok(None);
         };
-        match worker.format_file(uri, self.file_system.read().await.get(uri).as_deref()).await {
+
+        let fs_entry = self.file_system.read().await.get(uri);
+        let (language_id, content) = match fs_entry {
+            Some((id, content)) => (id, Some(content)),
+            None => (LanguageId::default(), None),
+        };
+        match worker.format_file(uri, &language_id, content.as_deref()).await {
             Ok(edits) => {
                 if edits.is_empty() {
                     return Ok(None);
@@ -902,10 +932,20 @@ impl Backend {
     ///
     /// For example, if we have workspaces `[workspace, workspace/deeper]` and the URI is
     /// `workspace/deeper/file.js`, both workers match, but `workspace/deeper` is more specific.
+    ///
+    /// For `untitled://` URIs (unsaved files), returns the first workspace worker.
+    /// This matches the behavior of other LSP servers like rust-analyzer and typescript-language-server.
     fn find_worker_for_uri<'a>(
         workers: &'a [WorkspaceWorker],
         uri: &Uri,
     ) -> Option<&'a WorkspaceWorker> {
+        // Handle untitled:// URIs - use first workspace
+        // These are in-memory files that don't have a file path
+        if uri.as_str().starts_with("untitled:") {
+            return workers.first();
+        }
+
+        // Handle file:// URIs - use path-based matching
         let file_path = uri.to_file_path()?;
 
         workers
@@ -1034,5 +1074,79 @@ mod tests {
         let non_file_uri: Uri = "https://example.com/file.js".parse().unwrap();
         let worker = Backend::find_worker_for_uri(&workers, &non_file_uri);
         assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_untitled_single_workspace() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace];
+
+        // Untitled file should use first workspace
+        let untitled_file: Uri = "untitled:///Untitled-1".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &untitled_file);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace");
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_untitled_multiple_workspaces() {
+        let workspace1 = WorkspaceWorker::new(
+            "file:///path/to/workspace1".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workspace2 = WorkspaceWorker::new(
+            "file:///path/to/workspace2".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace1, workspace2];
+
+        // Untitled file should use first workspace (not second)
+        let untitled_file: Uri = "untitled:///Untitled-1".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &untitled_file);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace1");
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_untitled_no_workspace() {
+        let workers: Vec<WorkspaceWorker> = vec![];
+
+        // Untitled file with no workspaces should return None
+        let untitled_file: Uri = "untitled:///Untitled-1".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &untitled_file);
+        assert!(worker.is_none());
+    }
+
+    #[test]
+    fn test_find_worker_for_uri_untitled_with_nested_workspaces() {
+        let workspace = WorkspaceWorker::new(
+            "file:///path/to/workspace".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workspace_deeper = WorkspaceWorker::new(
+            "file:///path/to/workspace/deeper".parse().unwrap(),
+            Arc::new([]),
+            DiagnosticMode::None,
+        );
+        let workers = vec![workspace, workspace_deeper];
+
+        // Untitled file should use first workspace (not nested one)
+        let untitled_file: Uri = "untitled:///Untitled-1".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &untitled_file);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace");
+
+        // File URIs should still use path-based matching
+        let file_in_deeper: Uri = "file:///path/to/workspace/deeper/file.js".parse().unwrap();
+        let worker = Backend::find_worker_for_uri(&workers, &file_in_deeper);
+        assert!(worker.is_some());
+        assert_eq!(worker.unwrap().get_root_uri().as_str(), "file:///path/to/workspace/deeper");
     }
 }

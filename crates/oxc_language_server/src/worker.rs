@@ -13,7 +13,7 @@ use tower_lsp_server::{
 use tracing::debug;
 
 use crate::{
-    ToolRestartChanges,
+    LanguageId, ToolRestartChanges,
     capabilities::DiagnosticMode,
     file_system::LSPFileSystem,
     tool::{DiagnosticResult, Tool, ToolBuilder},
@@ -191,10 +191,11 @@ impl WorkspaceWorker {
     pub async fn format_file(
         &self,
         uri: &Uri,
+        language_id: &LanguageId,
         content: Option<&str>,
     ) -> Result<Vec<TextEdit>, String> {
         for tool in self.tools.read().await.iter() {
-            let edits = tool.run_format(uri, content)?;
+            let edits = tool.run_format(uri, language_id, content)?;
             // If no edits are made, continue to the next tool
             if edits.is_empty() {
                 continue;
@@ -373,9 +374,8 @@ impl WorkspaceWorker {
                 };
 
                 for uri in file_system.keys() {
-                    let Ok(mut reports) =
-                        tool.run_diagnostic(&uri, file_system.get(&uri).as_deref())
-                    else {
+                    let content = file_system.get(&uri).map(|(_, content)| content);
+                    let Ok(mut reports) = tool.run_diagnostic(&uri, content.as_deref()) else {
                         // If diagnostics could not be run, skip this URI, but continue with others
                         // TODO: Should we aggregate errors instead? One by one, or all together?
                         continue;

@@ -4,6 +4,29 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.114.0] - 2026-02-16
+
+### 🐛 Bug Fixes
+
+- 3e0e5ba isolated-declarations: Align readonly class array initializer diagnostics with tsc (#19218) (camc314)
+
+### ⚡ Performance
+
+- 99ce2a6 isolated_declarations: Mark all diagnostic functions as `#[cold]` (#19279) (camc314)
+- e5baf60 isolated-declarations: Replace hash collections with index-based Vec (#19221) (Dunqing)
+
+### 📚 Documentation
+
+- 569aa61 rust: Add missing rustdocs and remove missing_docs lint attrs (#19306) (Boshen)
+
+## [0.113.0] - 2026-02-10
+
+### 🐛 Bug Fixes
+
+- a7514e4 isolated-declarations: Preserve const context in literal type inference (#19178) (camc314)
+- 312e756 isolated-declarations: Preserve readonly literal initializers (#19177) (camc314)
+- d0ca8d0 isolated-declarations: Skip parenthesis when inferring type (#19176) (camc314)
+
 ## [0.111.0] - 2026-01-26
 
 ### 💥 BREAKING CHANGES

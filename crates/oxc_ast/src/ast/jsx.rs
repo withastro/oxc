@@ -4,10 +4,13 @@
 // They are purely markers for codegen used in `tasks/ast_tools`. See docs in that crate.
 // Read [`macro@oxc_ast_macros::ast`] for more information.
 
+use std::cell::Cell;
+
 use oxc_allocator::{Box, CloneIn, Dummy, GetAddress, TakeIn, UnstableAddress, Vec};
 use oxc_ast_macros::ast;
 use oxc_estree::ESTree;
 use oxc_span::{Atom, ContentEq, GetSpan, GetSpanMut, Span};
+use oxc_syntax::node::NodeId;
 
 use super::{
     astro::{AstroComment, AstroDoctype, AstroScript},
@@ -40,7 +43,9 @@ use super::{
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXElement<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// Opening tag of the element.
     #[estree(via = JSXElementOpeningElement)]
@@ -73,7 +78,9 @@ pub struct JSXElement<'a> {
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 #[estree(add_fields(selfClosing = JSXOpeningElementSelfClosing))]
 pub struct JSXOpeningElement<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The possibly-namespaced tag name, e.g. `Foo` in `<Foo />`.
     pub name: JSXElementName<'a>,
@@ -99,7 +106,9 @@ pub struct JSXOpeningElement<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXClosingElement<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The tag name, e.g. `Foo` in `</Foo>`.
     pub name: JSXElementName<'a>,
@@ -117,7 +126,9 @@ pub struct JSXClosingElement<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXFragment<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// `<>`
     pub opening_fragment: JSXOpeningFragment,
@@ -133,7 +144,9 @@ pub struct JSXFragment<'a> {
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 #[estree(add_fields(attributes = JsEmptyArray, selfClosing = JsFalse))]
 pub struct JSXOpeningFragment {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
 }
 
@@ -142,7 +155,9 @@ pub struct JSXOpeningFragment {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXClosingFragment {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
 }
 
@@ -176,7 +191,9 @@ pub enum JSXElementName<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXNamespacedName<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// Namespace portion of the name, e.g. `Apple` in `<Apple:Orange />`
     pub namespace: JSXIdentifier<'a>,
@@ -203,7 +220,9 @@ pub struct JSXNamespacedName<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXMemberExpression<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The object being accessed. This is everything before the last `.`.
     pub object: JSXMemberExpressionObject<'a>,
@@ -258,7 +277,9 @@ pub enum JSXMemberExpressionObject<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXExpressionContainer<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The expression inside the container.
     pub expression: JSXExpression<'a>,
@@ -293,7 +314,9 @@ pub enum JSXExpression<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXEmptyExpression {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
 }
 
@@ -333,7 +356,9 @@ pub enum JSXAttributeItem<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXAttribute<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The name of the attribute. This is a prop in React-like applications.
     pub name: JSXAttributeName<'a>,
@@ -354,7 +379,9 @@ pub struct JSXAttribute<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXSpreadAttribute<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The expression being spread.
     pub argument: Expression<'a>,
@@ -426,7 +453,9 @@ pub enum JSXAttributeValue<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXIdentifier<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The name of the identifier.
     #[estree(json_safe)]
@@ -470,7 +499,9 @@ pub enum JSXChild<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXSpreadChild<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The expression being spread.
     pub expression: Expression<'a>,
@@ -490,7 +521,9 @@ pub struct JSXSpreadChild<'a> {
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree, UnstableAddress)]
 pub struct JSXText<'a> {
-    /// Node location in source code
+    /// Unique identifier for this AST node.
+    pub node_id: Cell<NodeId>,
+    /// Node location in source code.
     pub span: Span,
     /// The text content.
     pub value: Atom<'a>,

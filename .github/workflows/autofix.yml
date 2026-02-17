@@ -27,7 +27,7 @@ jobs:
         with:
           restore-cache: true
           cache-key: warm
-          tools: just,cargo-shear@1.9.0
+          tools: just,cargo-shear@1.9.1
           components: rustfmt
 
       - name: cargo-shear
@@ -44,6 +44,6 @@ jobs:
 
       - run: just fmt
 
-      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27 # v1.3.2
+      - uses: autofix-ci/action@7a166d7532b277f34e16238930461bf77f9d7ed8 # v1.3.3
         with:
           fail-fast: false

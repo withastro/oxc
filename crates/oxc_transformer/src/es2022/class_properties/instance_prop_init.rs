@@ -18,7 +18,7 @@ use crate::context::TraverseCtx;
 
 use super::ClassProperties;
 
-impl<'a> ClassProperties<'a, '_> {
+impl<'a> ClassProperties<'a> {
     /// Reparent property initializers scope.
     ///
     /// Instance property initializers move from the class body into either class constructor,
@@ -72,7 +72,7 @@ impl<'a, 'v> InstanceInitializerVisitor<'a, 'v> {
     fn new(
         instance_inits_scope_id: ScopeId,
         constructor_scope_id: ScopeId,
-        class_properties: &'v mut ClassProperties<'a, '_>,
+        class_properties: &'v mut ClassProperties<'a>,
         ctx: &'v mut TraverseCtx<'a>,
     ) -> Self {
         Self {
@@ -127,7 +127,7 @@ impl<'a> InstanceInitializerVisitor<'a, '_> {
         // with same `ScopeId` every time here, but `ScopeTree` doesn't allow that, and we also
         // take a `&mut ScopeTree` in `reparent_scope`, so borrow-checker doesn't allow that.
         let Some(constructor_symbol_id) =
-            self.ctx.scoping().get_binding(self.constructor_scope_id, &ident.name)
+            self.ctx.scoping().get_binding(self.constructor_scope_id, ident.name)
         else {
             return;
         };
