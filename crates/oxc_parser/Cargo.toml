@@ -44,8 +44,10 @@ oxc_ast_visit = { workspace = true, features = ["serialize"] }
 pico-args = { workspace = true }
 
 [features]
-default = ["regular_expression"]
+default = ["regular_expression", "astro"]
 # Parse regex
 regular_expression = ["dep:oxc_regular_expression"]
+# Support for parsing Astro files (.astro)
+astro = []
 # Expose Lexer for benchmarks
 benchmarking = []

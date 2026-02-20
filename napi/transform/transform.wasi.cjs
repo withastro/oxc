@@ -109,6 +109,9 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
 })
 module.exports = __napiModule.exports
 module.exports.Severity = __napiModule.exports.Severity
+module.exports.AstroCompileResult = __napiModule.exports.AstroCompileResult
+module.exports.compileAstro = __napiModule.exports.compileAstro
+module.exports.compileAstroSync = __napiModule.exports.compileAstroSync
 module.exports.HelperMode = __napiModule.exports.HelperMode
 module.exports.isolatedDeclaration = __napiModule.exports.isolatedDeclaration
 module.exports.isolatedDeclarationSync = __napiModule.exports.isolatedDeclarationSync

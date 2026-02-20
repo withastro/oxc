@@ -1421,24 +1421,12 @@ fn test_report_vars_only_used_as_types() {
 
 #[test]
 fn test_should_run() {
-    let pass = vec![
+    let mut pass = vec![
         (
             r#"<script setup lang="ts"> import * as vue from 'vue' </script>"#,
             None,
             None,
             Some(PathBuf::from("src/foo/bar.vue")),
-        ),
-        (
-            r"---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
----
-<Layout>
-	<Welcome />
-</Layout>",
-            None,
-            None,
-            Some(PathBuf::from("src/foo/bar.astro")),
         ),
         (
             r"<script>
@@ -1450,6 +1438,20 @@ import Layout from '../layouts/Layout.astro';
             Some(PathBuf::from("src/foo/bar.svelte")),
         ),
     ];
+
+    #[cfg(feature = "astro")]
+    pass.push((
+        r"---
+import Welcome from '../components/Welcome.astro';
+import Layout from '../layouts/Layout.astro';
+---
+<Layout>
+	<Welcome />
+</Layout>",
+        None,
+        None,
+        Some(PathBuf::from("src/foo/bar.astro")),
+    ));
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, vec![])
         .intentionally_allow_no_fix_tests()

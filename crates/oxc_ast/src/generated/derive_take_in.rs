@@ -5,6 +5,7 @@
 
 use oxc_allocator::TakeIn;
 
+use crate::ast::astro::*;
 use crate::ast::js::*;
 use crate::ast::jsx::*;
 use crate::ast::literal::*;
@@ -475,3 +476,13 @@ impl<'a> TakeIn<'a> for JSDocNullableType<'a> {}
 impl<'a> TakeIn<'a> for JSDocNonNullableType<'a> {}
 
 impl<'a> TakeIn<'a> for JSDocUnknownType {}
+
+impl<'a> TakeIn<'a> for AstroRoot<'a> {}
+
+impl<'a> TakeIn<'a> for AstroFrontmatter<'a> {}
+
+impl<'a> TakeIn<'a> for AstroScript<'a> {}
+
+impl<'a> TakeIn<'a> for AstroDoctype<'a> {}
+
+impl<'a> TakeIn<'a> for AstroComment<'a> {}

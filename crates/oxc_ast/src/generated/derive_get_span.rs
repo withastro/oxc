@@ -5,6 +5,7 @@
 
 use oxc_span::{GetSpan, Span};
 
+use crate::ast::astro::*;
 use crate::ast::js::*;
 use crate::ast::jsx::*;
 use crate::ast::literal::*;
@@ -1458,6 +1459,9 @@ impl GetSpan for JSXChild<'_> {
             Self::Fragment(it) => GetSpan::span(&**it),
             Self::ExpressionContainer(it) => GetSpan::span(&**it),
             Self::Spread(it) => GetSpan::span(&**it),
+            Self::AstroScript(it) => GetSpan::span(&**it),
+            Self::AstroDoctype(it) => GetSpan::span(&**it),
+            Self::AstroComment(it) => GetSpan::span(&**it),
         }
     }
 }
@@ -2174,6 +2178,41 @@ impl GetSpan for JSDocNonNullableType<'_> {
 }
 
 impl GetSpan for JSDocUnknownType {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroRoot<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroFrontmatter<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroScript<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroDoctype<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GetSpan for AstroComment<'_> {
     #[inline]
     fn span(&self) -> Span {
         self.span

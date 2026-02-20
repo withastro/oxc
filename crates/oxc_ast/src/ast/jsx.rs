@@ -12,7 +12,13 @@ use oxc_estree::ESTree;
 use oxc_span::{Atom, ContentEq, GetSpan, GetSpanMut, Span};
 use oxc_syntax::node::NodeId;
 
-use super::{inherit_variants, js::*, literal::*, ts::*};
+use super::{
+    astro::{AstroComment, AstroDoctype, AstroScript},
+    inherit_variants,
+    js::*,
+    literal::*,
+    ts::*,
+};
 
 // 1.2 JSX Elements
 
@@ -475,6 +481,15 @@ pub enum JSXChild<'a> {
     ExpressionContainer(Box<'a, JSXExpressionContainer<'a>>) = 3,
     /// `<Foo>{...spread}</Foo>`
     Spread(Box<'a, JSXSpreadChild<'a>>) = 4,
+    /// Astro `<script>` element with parsed TypeScript content
+    /// This is only used in Astro files.
+    AstroScript(Box<'a, AstroScript<'a>>) = 5,
+    /// Astro doctype declaration like `<!doctype html>`
+    /// This is only used in Astro files.
+    AstroDoctype(Box<'a, AstroDoctype<'a>>) = 6,
+    /// Astro HTML comment like `<!-- comment -->`
+    /// This is only used in Astro files.
+    AstroComment(Box<'a, AstroComment<'a>>) = 7,
 }
 
 /// JSX Spread Child.

@@ -92,11 +92,11 @@ pub struct SemanticBuilder<'a> {
 
     pub(crate) unresolved_references: UnresolvedReferencesStack<'a>,
 
-    unused_labels: UnusedLabels<'a>,
+    pub(crate) unused_labels: UnusedLabels<'a>,
     #[cfg(feature = "linter")]
-    jsdoc: JSDocBuilder<'a>,
-    stats: Option<Stats>,
-    excess_capacity: f64,
+    pub(crate) jsdoc: JSDocBuilder<'a>,
+    pub(crate) stats: Option<Stats>,
+    pub(crate) excess_capacity: f64,
 
     /// Should additional syntax checks be performed?
     ///
@@ -321,7 +321,7 @@ impl<'a> SemanticBuilder<'a> {
                 .any(|scope_id| self.scoping.scope_flags(scope_id).is_ts_module_block())
     }
 
-    fn create_ast_node(&mut self, kind: AstKind<'a>) {
+    pub(crate) fn create_ast_node(&mut self, kind: AstKind<'a>) {
         #[cfg(not(feature = "linter"))]
         let flags = self.current_node_flags;
         #[cfg(feature = "linter")]
@@ -343,7 +343,7 @@ impl<'a> SemanticBuilder<'a> {
     }
 
     #[inline]
-    fn pop_ast_node(&mut self) {
+    pub(crate) fn pop_ast_node(&mut self) {
         self.current_node_id = self.nodes.parent_id(self.current_node_id);
     }
 
@@ -514,7 +514,7 @@ impl<'a> SemanticBuilder<'a> {
     /// already resolved.
     ///
     /// This gets called every time [`SemanticBuilder`] exits a scope.
-    fn resolve_references_for_current_scope(&mut self) {
+    pub(crate) fn resolve_references_for_current_scope(&mut self) {
         let (current_refs, parent_refs) = self.unresolved_references.current_and_parent_mut();
 
         if current_refs.is_empty() {
@@ -731,6 +731,11 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 
         // Check `current_function_node_id` has been reset to as it was at start
         debug_assert!(self.current_function_node_id == NodeId::ROOT);
+    }
+
+    #[cfg(feature = "astro")]
+    fn visit_astro_script(&mut self, script: &AstroScript<'a>) {
+        crate::astro::visit_astro_script(self, script);
     }
 
     fn visit_break_statement(&mut self, stmt: &BreakStatement<'a>) {

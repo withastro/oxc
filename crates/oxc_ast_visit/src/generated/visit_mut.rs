@@ -1192,6 +1192,31 @@ pub trait VisitMut<'a>: Sized {
     }
 
     #[inline]
+    fn visit_astro_root(&mut self, it: &mut AstroRoot<'a>) {
+        walk_astro_root(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_frontmatter(&mut self, it: &mut AstroFrontmatter<'a>) {
+        walk_astro_frontmatter(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_script(&mut self, it: &mut AstroScript<'a>) {
+        walk_astro_script(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_doctype(&mut self, it: &mut AstroDoctype<'a>) {
+        walk_astro_doctype(self, it);
+    }
+
+    #[inline]
+    fn visit_astro_comment(&mut self, it: &mut AstroComment<'a>) {
+        walk_astro_comment(self, it);
+    }
+
+    #[inline]
     fn visit_span(&mut self, it: &mut Span) {
         walk_span(self, it);
     }
@@ -3309,7 +3334,6 @@ pub mod walk_mut {
         visitor.leave_node(kind);
     }
 
-    #[inline]
     pub fn walk_jsx_child<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut JSXChild<'a>) {
         // No `AstType` for this type
         match it {
@@ -3318,6 +3342,9 @@ pub mod walk_mut {
             JSXChild::Fragment(it) => visitor.visit_jsx_fragment(it),
             JSXChild::ExpressionContainer(it) => visitor.visit_jsx_expression_container(it),
             JSXChild::Spread(it) => visitor.visit_jsx_spread_child(it),
+            JSXChild::AstroScript(it) => visitor.visit_astro_script(it),
+            JSXChild::AstroDoctype(it) => visitor.visit_astro_doctype(it),
+            JSXChild::AstroComment(it) => visitor.visit_astro_comment(it),
         }
     }
 
@@ -4457,6 +4484,55 @@ pub mod walk_mut {
         it: &mut JSDocUnknownType,
     ) {
         let kind = AstType::JSDocUnknownType;
+        visitor.enter_node(kind);
+        visitor.visit_span(&mut it.span);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_root<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut AstroRoot<'a>) {
+        let kind = AstType::AstroRoot;
+        visitor.enter_node(kind);
+        visitor.visit_span(&mut it.span);
+        if let Some(frontmatter) = &mut it.frontmatter {
+            visitor.visit_astro_frontmatter(frontmatter);
+        }
+        visitor.visit_jsx_children(&mut it.body);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_frontmatter<'a, V: VisitMut<'a>>(
+        visitor: &mut V,
+        it: &mut AstroFrontmatter<'a>,
+    ) {
+        let kind = AstType::AstroFrontmatter;
+        visitor.enter_node(kind);
+        visitor.visit_span(&mut it.span);
+        visitor.visit_program(&mut it.program);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_script<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut AstroScript<'a>) {
+        let kind = AstType::AstroScript;
+        visitor.enter_node(kind);
+        visitor.visit_span(&mut it.span);
+        visitor.visit_program(&mut it.program);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_doctype<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut AstroDoctype<'a>) {
+        let kind = AstType::AstroDoctype;
+        visitor.enter_node(kind);
+        visitor.visit_span(&mut it.span);
+        visitor.leave_node(kind);
+    }
+
+    #[inline]
+    pub fn walk_astro_comment<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut AstroComment<'a>) {
+        let kind = AstType::AstroComment;
         visitor.enter_node(kind);
         visitor.visit_span(&mut it.span);
         visitor.leave_node(kind);

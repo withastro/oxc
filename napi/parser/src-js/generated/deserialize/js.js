@@ -2746,6 +2746,12 @@ function deserializeJSXChild(pos) {
       return deserializeBoxJSXExpressionContainer(pos + 8);
     case 4:
       return deserializeBoxJSXSpreadChild(pos + 8);
+    case 5:
+      return deserializeBoxAstroScript(pos + 8);
+    case 6:
+      return deserializeBoxAstroDoctype(pos + 8);
+    case 7:
+      return deserializeBoxAstroComment(pos + 8);
     default:
       throw Error(`Unexpected discriminant ${uint8[pos]} for JSXChild`);
   }
@@ -4111,6 +4117,8 @@ function deserializeCommentKind(pos) {
       return "Block";
     case 2:
       return "Block";
+    case 3:
+      return "Html";
     default:
       throw Error(`Unexpected discriminant ${uint8[pos]} for CommentKind`);
   }
@@ -4125,6 +4133,35 @@ function deserializeComment(pos) {
     value: sourceText.slice(start + 2, end - (type === "Line" ? 0 : 2)),
     start,
     end,
+  };
+}
+
+function deserializeAstroScript(pos) {
+  let node = {
+    type: "AstroScript",
+    program: null,
+    start: deserializeU32(pos),
+    end: deserializeU32(pos + 4),
+  };
+  node.program = deserializeProgram(pos + 8);
+  return node;
+}
+
+function deserializeAstroDoctype(pos) {
+  return {
+    type: "AstroDoctype",
+    value: deserializeStr(pos + 8),
+    start: deserializeU32(pos),
+    end: deserializeU32(pos + 4),
+  };
+}
+
+function deserializeAstroComment(pos) {
+  return {
+    type: "AstroComment",
+    value: deserializeStr(pos + 8),
+    start: deserializeU32(pos),
+    end: deserializeU32(pos + 4),
   };
 }
 
@@ -5422,6 +5459,18 @@ function deserializeBoxJSXText(pos) {
 
 function deserializeBoxJSXSpreadChild(pos) {
   return deserializeJSXSpreadChild(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroScript(pos) {
+  return deserializeAstroScript(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroDoctype(pos) {
+  return deserializeAstroDoctype(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroComment(pos) {
+  return deserializeAstroComment(uint32[pos >> 2]);
 }
 
 function deserializeVecTSEnumMember(pos) {
