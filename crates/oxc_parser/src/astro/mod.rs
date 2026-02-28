@@ -1273,6 +1273,120 @@ const name = "World";
     }
 
     #[test]
+    fn parse_astro_block_comment_between_attributes() {
+        // Block comments between attributes are skipped transparently by the lexer.
+        // <div
+        // /* Hello */
+        // class="something"
+        // ></div>
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div\n/* Hello */\nclass=\"something\"\n></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                1,
+                "expected 1 attribute (class), comment should be skipped"
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_block_comment_between_attributes_multiline() {
+        // Multi-line block comment between attributes.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div\n/*\n * Hello\n */\nclass=\"something\"\n></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            assert_eq!(element.opening_element.attributes.len(), 1);
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_block_comment_between_multiple_attributes() {
+        // Block comment sandwiched between real attributes — all three must survive.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div id=\"a\"\n/* ignored */\nclass=\"b\"\n></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                2,
+                "expected 2 attributes (id, class), comment should be skipped"
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_line_comment_on_own_line_between_attributes() {
+        // A `//` line comment on its own line between attributes.
+        // The newline that terminates the comment acts as the separator,
+        // so the next attribute is parsed correctly.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div\n// Hello\nclass=\"something\"\n></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                1,
+                "expected 1 attribute (class), line comment should be skipped"
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
+    fn parse_astro_line_comment_inline_after_attribute() {
+        // A `//` line comment at the end of an attribute line.
+        // Everything from `//` to end-of-line is skipped; the next line's
+        // attribute is still parsed normally.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div class=\"a\" // inline comment\nid=\"b\"\n></div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            assert_eq!(
+                element.opening_element.attributes.len(),
+                2,
+                "expected 2 attributes (class, id); inline line comment should be skipped"
+            );
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
+    }
+
+    #[test]
     fn parse_astro_template_literal_attribute() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
