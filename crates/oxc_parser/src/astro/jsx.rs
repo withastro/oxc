@@ -12,7 +12,7 @@ use oxc_allocator::{Allocator, Box, Dummy, Vec};
 use oxc_ast::ast::*;
 use oxc_span::{Atom, GetSpan, Span};
 
-use crate::{ParserImpl, diagnostics, lexer::Kind};
+use crate::{ParserImpl, config::ParserConfig, diagnostics, lexer::Kind};
 
 /// Represents either a closing JSX element or fragment (Astro copy).
 enum JSXClosing<'a> {
@@ -28,7 +28,7 @@ impl<'a> Dummy<'a> for JSXClosing<'a> {
     }
 }
 
-impl<'a> ParserImpl<'a> {
+impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     // ==================== Astro-specific JSX entry points ====================
     //
     // These are Astro-specific versions of the core JSX parsing functions.

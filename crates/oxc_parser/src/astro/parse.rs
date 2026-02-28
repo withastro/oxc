@@ -5,7 +5,7 @@ use oxc_ast::AstBuilder;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_span::{SourceType, Span};
 
-use crate::{ParseOptions, ParserImpl, parser_parse::UniquePromise};
+use crate::{ParseOptions, ParserImpl, config::NoTokensParserConfig, parser_parse::UniquePromise};
 
 use super::parse_astro_scripts;
 
@@ -285,7 +285,8 @@ pub fn parse_astro<'a>(
 
     // Parse the body JSX
     let unique = UniquePromise::new_for_astro();
-    let parser = ParserImpl::new(allocator, source_text, source_type, options, unique);
+    let parser =
+        ParserImpl::new(allocator, source_text, source_type, options, NoTokensParserConfig, unique);
     let (mut body, body_errors, body_panicked) =
         parser.parse_astro_body_only(frontmatter_info.as_ref().map(|f| f.body_start));
 
@@ -305,8 +306,14 @@ pub fn parse_astro<'a>(
         // Enable allow_return_outside_function for Astro frontmatter per spec §2.1
         let frontmatter_options = ParseOptions { allow_return_outside_function: true, ..options };
         let unique = UniquePromise::new_for_astro();
-        let parser =
-            ParserImpl::new(allocator, padded_source, ts_source_type, frontmatter_options, unique);
+        let parser = ParserImpl::new(
+            allocator,
+            padded_source,
+            ts_source_type,
+            frontmatter_options,
+            NoTokensParserConfig,
+            unique,
+        );
         let result = parser.parse();
 
         let ast = AstBuilder::new(allocator);

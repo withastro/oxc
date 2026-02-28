@@ -8,7 +8,7 @@ use oxc_ast::ast::{Argument, Expression, JSXChild, JSXExpression, Statement};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_span::SourceType;
 
-use crate::{ParseOptions, ParserImpl, parser_parse::UniquePromise};
+use crate::{ParseOptions, ParserImpl, config::NoTokensParserConfig, parser_parse::UniquePromise};
 
 /// Parse script content in AstroScript nodes.
 /// This traverses the body and replaces placeholder programs with parsed TypeScript.
@@ -51,8 +51,14 @@ fn parse_scripts_in_child<'a>(
 
                 // Create a new parser for the script content
                 let unique = UniquePromise::new_for_astro();
-                let parser =
-                    ParserImpl::new(allocator, padded_source, ts_source_type, options, unique);
+                let parser = ParserImpl::new(
+                    allocator,
+                    padded_source,
+                    ts_source_type,
+                    options,
+                    NoTokensParserConfig,
+                    unique,
+                );
                 let result = parser.parse();
 
                 // Replace the placeholder program with the parsed one

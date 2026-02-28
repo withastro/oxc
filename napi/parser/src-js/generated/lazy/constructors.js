@@ -14055,16 +14055,16 @@ function constructOptionBoxAstroFrontmatter(pos, ast) {
   return constructBoxAstroFrontmatter(pos, ast);
 }
 
-function constructU64(pos, ast) {
-  const { uint32 } = ast.buffer,
-    pos32 = pos >> 2;
-  return uint32[pos32] + uint32[pos32 + 1] * /* 2^32 */ 4294967296;
-}
-
 function constructOptionNameSpan(pos, ast) {
   if (ast.buffer.uint32[(pos + 8) >> 2] === 0 && ast.buffer.uint32[(pos + 12) >> 2] === 0)
     return null;
   return new NameSpan(pos, ast);
+}
+
+function constructU64(pos, ast) {
+  const { uint32 } = ast.buffer,
+    pos32 = pos >> 2;
+  return uint32[pos32] + uint32[pos32 + 1] * /* 2^32 */ 4294967296;
 }
 
 function constructOptionU64(pos, ast) {

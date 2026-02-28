@@ -9,7 +9,7 @@
 use super::Lexer;
 
 #[cfg(feature = "astro")]
-impl Lexer<'_> {
+impl<C: crate::config::LexerConfig> Lexer<'_, C> {
     /// Set the lexer position for Astro parsing.
     /// This is used to skip to a specific offset in the source.
     pub(crate) fn set_position_for_astro(&mut self, offset: u32) {
@@ -58,7 +58,7 @@ mod astro_jsx {
     /// Only `<` stops text scanning (for child tags like `<mi>`, `<mo>`, etc.).
     static ASTRO_FOREIGN_TEXT_END_TABLE: SafeByteMatchTable = safe_byte_match_table!(|b| b == b'<');
 
-    impl Lexer<'_> {
+    impl<C: crate::config::LexerConfig> Lexer<'_, C> {
         /// Read a JSX child token in Astro mode.
         ///
         /// This is the Astro-specific version of `read_jsx_child` that handles:

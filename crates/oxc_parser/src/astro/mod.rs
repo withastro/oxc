@@ -27,12 +27,12 @@ pub use scripts::parse_astro_scripts;
 use oxc_allocator::{Box, Vec};
 use oxc_ast::ast::*;
 
-use crate::{ParserImpl, lexer::Kind};
+use crate::{ParserImpl, config::ParserConfig, lexer::Kind};
 
 type NoTypeArgs<'a> = Option<Box<'a, TSTypeParameterInstantiation<'a>>>;
 type NoClosingElement<'a> = Option<Box<'a, JSXClosingElement<'a>>>;
 
-impl<'a> ParserImpl<'a> {
+impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Parse the HTML body of an Astro file.
     ///
     /// The body is essentially JSX children in an implicit fragment.
@@ -74,7 +74,7 @@ impl<'a> ParserImpl<'a> {
                         let after_script =
                             self.source_text.get((self.cur_token().span().start as usize) + 6..);
                         if let Some(rest) = after_script {
-                            let next_char = rest.chars().next();
+                            let next_char: Option<char> = rest.chars().next();
                             if matches!(
                                 next_char,
                                 Some(' ' | '>' | '/' | '\n' | '\r' | '\t') | None

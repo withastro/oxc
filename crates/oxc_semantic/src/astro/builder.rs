@@ -11,9 +11,9 @@ use oxc_cfg::{ControlFlowGraphBuilder, ErrorEdgeKind};
 use oxc_span::{Ident, SourceType};
 use oxc_syntax::{reference::ReferenceFlags, scope::ScopeFlags};
 
-#[cfg(feature = "linter")]
-use crate::jsdoc::JSDocBuilder;
 use crate::{Semantic, SemanticBuilder, SemanticBuilderReturn, stats::Stats};
+#[cfg(feature = "jsdoc")]
+use oxc_jsdoc::JSDocBuilder;
 
 #[cfg(feature = "cfg")]
 macro_rules! control_flow {
@@ -80,7 +80,7 @@ impl<'a> SemanticBuilderAstroExt<'a> for SemanticBuilder<'a> {
         // Astro files are TypeScript + JSX
         self.source_type = SourceType::ts().with_jsx(true);
 
-        #[cfg(feature = "linter")]
+        #[cfg(feature = "jsdoc")]
         {
             self.jsdoc = JSDocBuilder::new(self.source_text, comments);
         }
@@ -108,8 +108,11 @@ impl<'a> SemanticBuilderAstroExt<'a> for SemanticBuilder<'a> {
         self.scoping
             .set_root_unresolved_references(self.unresolved_references.into_root().into_iter());
 
-        #[cfg(feature = "linter")]
-        let jsdoc = self.jsdoc.build();
+        #[cfg(feature = "jsdoc")]
+        let jsdoc = {
+            let result = self.jsdoc.build();
+            crate::jsdoc::JSDocFinder::new(result.attached, result.not_attached)
+        };
 
         #[cfg(debug_assertions)]
         self.unused_labels.assert_empty();
@@ -122,7 +125,7 @@ impl<'a> SemanticBuilderAstroExt<'a> for SemanticBuilder<'a> {
             nodes: self.nodes,
             scoping: self.scoping,
             classes: self.class_table_builder.build(),
-            #[cfg(feature = "linter")]
+            #[cfg(feature = "jsdoc")]
             jsdoc,
             unused_labels: self.unused_labels.labels,
             #[cfg(feature = "cfg")]

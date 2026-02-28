@@ -1120,7 +1120,11 @@ impl Runtime {
         if !ret.errors.is_empty() {
             let section_source = JavaScriptSource::new(source_text, source_type);
             if let Some(sections) = &mut out_sections {
-                sections.push(SectionContent { source: section_source, semantic: None });
+                sections.push(SectionContent {
+                    source: section_source,
+                    semantic: None,
+                    parser_tokens: None,
+                });
             }
             return smallvec::smallvec![Err(ret.errors)];
         }
@@ -1146,7 +1150,11 @@ impl Runtime {
         if !semantic_ret.errors.is_empty() {
             let section_source = JavaScriptSource::new(source_text, source_type);
             if let Some(sections) = &mut out_sections {
-                sections.push(SectionContent { source: section_source, semantic: None });
+                sections.push(SectionContent {
+                    source: section_source,
+                    semantic: None,
+                    parser_tokens: None,
+                });
             }
             return smallvec::smallvec![Err(semantic_ret.errors)];
         }
@@ -1178,7 +1186,11 @@ impl Runtime {
 
         let section_source = JavaScriptSource::new(source_text, source_type);
         if let Some(sections) = &mut out_sections {
-            sections.push(SectionContent { source: section_source, semantic: Some(semantic) });
+            sections.push(SectionContent {
+                source: section_source,
+                semantic: Some(semantic),
+                parser_tokens: None,
+            });
         }
 
         smallvec::smallvec![Ok(ResolvedModuleRecord { module_record, resolved_module_requests })]
