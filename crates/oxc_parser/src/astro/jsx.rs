@@ -361,7 +361,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         span_start: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXExpressionContainer<'a>> {
-        // In Astro mode with JSX children starting with `<`, parse as potential JSX children.
+        // In Astro mode, `{<div/>}` and `{<!-- comment -->}` are treated symmetrically:
+        // both route through the JSX-children-in-expression path.
+        // `<!-- -->` produces an `AstroComment` JSXChild, just as it does in a JSX
+        // children position.  Trailing content after the comment (e.g. `{<!-- --> x}`)
+        // is an error, exactly like `{<div/> x}` would be.
         if in_jsx_child && self.at(Kind::LAngle) {
             let expr = self.parse_astro_jsx_children_in_expression(span_start);
             return self.ast.alloc_jsx_expression_container(self.end_span(span_start), expr);
@@ -590,46 +594,6 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
     }
 
-    /// Skip an HTML comment `<!-- ... -->` inside JSX (Astro-specific).
-    pub(crate) fn skip_jsx_html_comment(&mut self) {
-        self.bump_any(); // skip `!`
-
-        if self.at(Kind::Minus2) {
-            self.bump_any();
-        } else if self.at(Kind::Minus) {
-            self.bump_any();
-            if self.at(Kind::Minus) {
-                self.bump_any();
-            }
-        }
-
-        let start_pos = self.cur_token().span().start as usize;
-        if let Some(rest) = self.source_text.get(start_pos..)
-            && let Some(end_pos) = rest.find("-->")
-        {
-            #[expect(clippy::cast_possible_truncation)]
-            let new_pos = (start_pos + end_pos + 3) as u32;
-            self.lexer.set_position_for_astro(new_pos);
-            self.token = self.lexer.next_jsx_child();
-            return;
-        }
-
-        while !self.at(Kind::Eof) {
-            if self.at(Kind::Minus2) || self.at(Kind::Minus) {
-                self.bump_any();
-                if self.at(Kind::Minus) {
-                    self.bump_any();
-                }
-                if self.at(Kind::RAngle) {
-                    self.bump_any();
-                    break;
-                }
-            } else {
-                self.bump_any();
-            }
-        }
-    }
-
     /// Check if the element name is an HTML void element.
     pub(crate) fn is_astro_void_element(name: &JSXElementName<'a>) -> bool {
         match name {
@@ -662,6 +626,60 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             JSXElementName::Identifier(ident) => matches!(ident.name.as_str(), "style"),
             _ => false,
         }
+    }
+
+    /// Determine whether a `<script>` tag's content should be treated as raw text
+    /// (i.e. NOT parsed as JavaScript/TypeScript).
+    ///
+    /// Rules:
+    /// - If there is **no `type` attribute** → parse as TS/JS (return `false`)
+    /// - If `type` is a JS/module MIME type → parse as TS/JS (return `false`)
+    ///   - Recognised JS MIME types: `text/javascript`, `text/ecmascript`,
+    ///     `application/javascript`, `application/ecmascript`,
+    ///     `application/x-javascript`, `module`
+    /// - If `type` is anything else (e.g. `text/css`, `application/json`) →
+    ///   treat as raw text (return `true`)
+    ///
+    /// Other attributes (e.g. `defer`, `src`, `is:inline`, `asdf`) do not affect
+    /// parsing — only the presence and value of `type` matters.
+    pub(crate) fn is_raw_text_script(attributes: &[JSXAttributeItem<'a>]) -> bool {
+        for attr in attributes {
+            let JSXAttributeItem::Attribute(attr) = attr else { continue };
+            let attr_name = match &attr.name {
+                JSXAttributeName::Identifier(ident) => ident.name.as_str(),
+                JSXAttributeName::NamespacedName(_) => continue,
+            };
+            if attr_name != "type" {
+                continue;
+            }
+            // Found a `type` attribute — check its value.
+            let type_value = match &attr.value {
+                None => {
+                    // `<script type>` with no value — treat as raw text
+                    return true;
+                }
+                Some(JSXAttributeValue::StringLiteral(s)) => s.value.as_str(),
+                Some(JSXAttributeValue::ExpressionContainer(container)) => {
+                    // Dynamic type attribute — we can't determine it statically,
+                    // so conservatively treat as raw text.
+                    let _ = container;
+                    return true;
+                }
+                Some(_) => return true,
+            };
+            // Check against known JS MIME types.
+            return !matches!(
+                type_value,
+                "text/javascript"
+                    | "text/ecmascript"
+                    | "application/javascript"
+                    | "application/ecmascript"
+                    | "application/x-javascript"
+                    | "module"
+            );
+        }
+        // No `type` attribute found — parse as TS/JS.
+        false
     }
 
     /// Check if the element is a foreign content element where `{` is literal text.
@@ -734,12 +752,15 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     }
 
     /// Parse a `<script>` element encountered inside JSX children (Astro-specific).
+    ///
+    /// See [`Self::is_raw_text_script`] for the rules on when the content is
+    /// parsed vs. treated as raw text.
     #[expect(clippy::cast_possible_truncation)]
     pub(crate) fn parse_astro_script_in_jsx(&mut self, span: u32) -> JSXChild<'a> {
         self.bump_any(); // skip `script`
 
         let attributes = self.parse_astro_jsx_attributes();
-        let has_attributes = !attributes.is_empty();
+        let has_attributes = Self::is_raw_text_script(&attributes);
 
         let is_self_closing = if self.at(Kind::Slash) {
             self.bump_any();
@@ -802,7 +823,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             ));
         }
 
-        let content_start = self.cur_token().span().start as usize;
+        // Use `prev_token_end` (right after `>`) instead of `cur_token().span().start` so
+        // that leading trivia (e.g. `// eslint-disable-next-line` comments) before the first
+        // real token is included in the content span and picked up by the parser.
+        let content_start = self.prev_token_end as usize;
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
@@ -1040,8 +1064,16 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                         let _: () = self.unexpected();
                         break;
                     } else if kind == Kind::Bang {
-                        self.skip_jsx_html_comment();
-                        self.token = self.lexer.next_jsx_child();
+                        // `<!--` HTML comment — produce an AstroComment child.
+                        // `parse_html_comment_in_jsx` repositions the lexer and
+                        // calls `next_jsx_child()` internally, so after returning
+                        // the loop continues in JSX-child mode.
+                        if let Some(comment) = self.parse_html_comment_in_jsx(child_span) {
+                            children.push(comment);
+                        } else {
+                            // Malformed `<!…>` — skip and continue.
+                            self.token = self.lexer.next_jsx_child();
+                        }
                     } else {
                         let _: () = self.unexpected();
                         break;

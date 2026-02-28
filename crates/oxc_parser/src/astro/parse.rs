@@ -28,6 +28,13 @@ pub struct AstroParserReturn<'a> {
 
     /// Whether the parser panicked and terminated early.
     pub panicked: bool,
+
+    /// JS-style comments encountered in the template body (expression containers, JSX
+    /// attributes, etc.).  These are **not** stored on any AST node — the body parser's
+    /// trivia builder is the only place they live.  Spans are absolute byte offsets into
+    /// the original source text, so they can be merged directly with frontmatter and
+    /// `<script>`-block comments before being fed to `DisableDirectivesBuilder`.
+    pub body_comments: Vec<oxc_ast::ast::Comment>,
 }
 
 /// Information about frontmatter boundaries
@@ -287,7 +294,7 @@ pub fn parse_astro<'a>(
     let unique = UniquePromise::new_for_astro();
     let parser =
         ParserImpl::new(allocator, source_text, source_type, options, NoTokensParserConfig, unique);
-    let (mut body, body_errors, body_panicked) =
+    let (mut body, body_errors, body_panicked, body_comments) =
         parser.parse_astro_body_only(frontmatter_info.as_ref().map(|f| f.body_start));
 
     // Parse the frontmatter TypeScript if present
@@ -364,5 +371,5 @@ pub fn parse_astro<'a>(
     let span = Span::new(0, source_text.len() as u32);
     let root = ast.astro_root(span, frontmatter, body);
 
-    AstroParserReturn { root, errors, panicked: body_panicked }
+    AstroParserReturn { root, errors, panicked: body_panicked, body_comments }
 }

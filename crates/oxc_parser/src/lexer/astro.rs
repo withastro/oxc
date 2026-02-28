@@ -25,12 +25,8 @@ impl<C: crate::config::LexerConfig> Lexer<'_, C> {
 // Astro-specific JSX child reading and attribute name lexing.
 #[cfg(feature = "astro")]
 mod astro_jsx {
-    use oxc_span::Span;
-
-    use crate::diagnostics;
-
     use super::super::{
-        Kind, Lexer, Token, cold_branch,
+        Kind, Lexer, Token,
         search::{SafeByteMatchTable, byte_search, safe_byte_match_table},
     };
 
@@ -96,9 +92,16 @@ mod astro_jsx {
                     self.consume_char();
                     Kind::LCurly
                 }
-                Some(b'}') if self.no_expression_in_jsx_children => {
-                    // In foreign content, `}` is also literal text
-                    self.read_jsx_child_foreign_text()
+                Some(b'}') => {
+                    if self.no_expression_in_jsx_children {
+                        // In foreign content, `}` is literal text
+                        self.read_jsx_child_foreign_text()
+                    } else {
+                        // Outside foreign content, `}` ends an expression container
+                        // (e.g. `{ <!-- comment --> text }` — the `}` closes `{`).
+                        self.consume_char();
+                        Kind::RCurly
+                    }
                 }
                 Some(_) => {
                     // Inside foreign content (<math>), use the foreign text table
@@ -110,7 +113,7 @@ mod astro_jsx {
                     // In Astro mode, `>` is valid text content (unlike JSX where it's an error).
                     // Use a more permissive table that doesn't stop at `>`.
                     let text_start = self.offset();
-                    let next_byte = byte_search! {
+                    let _next_byte = byte_search! {
                         lexer: self,
                         table: ASTRO_TEXT_END_TABLE,
                         handle_eof: {
@@ -123,21 +126,11 @@ mod astro_jsx {
                             };
                         },
                     };
-                    // `<` and `{` are valid stopping points (start of tag/expression)
-                    // `}` is still an error (unexpected closing brace)
-                    if matches!(next_byte, b'<' | b'{') {
-                        return Kind::JSXText;
-                    }
-                    // `}` - unexpected closing brace
-                    cold_branch(|| {
-                        let start = self.offset();
-                        self.error(diagnostics::unexpected_jsx_end(
-                            Span::empty(start),
-                            next_byte as char,
-                            "rbrace",
-                        ));
-                        Kind::Eof
-                    })
+                    // `<`, `{`, and `}` are all valid stopping points.
+                    // - `<` / `{`: start of tag / expression — return JSXText for text so far.
+                    // - `}`:  end of expression container — return JSXText; `}` stays unconsumed
+                    //   and the next `next_jsx_child()` call will return `RCurly`.
+                    Kind::JSXText
                 }
                 None => Kind::Eof,
             }

@@ -90,51 +90,21 @@ working directory: fixtures/report_unused_directives
     `----
   help: Remove the debugger statement
 
-  ! eslint(no-unused-vars): Variable 'unusedVariable2' is declared but never used. Unused variables should start with a '_'.
-    ,-[test.astro:18:7]
- 17 | // eslint-disable-next-line no-unused-vars
- 18 | const unusedVariable2 = 100;
-    :       ^^^^^^^|^^^^^^^
-    :              `-- 'unusedVariable2' is declared here
- 19 | 
-    `----
-  help: Consider removing this declaration.
-
-  ! eslint(no-console): Unexpected console statement.
-    ,-[test.astro:22:5]
- 21 |     // eslint-disable-next-line no-console
- 22 |     console.log('Inside test function');
-    :     ^^^^^^^^^^^
- 23 | }
-    `----
-  help: Delete this console statement.
-
-  ! eslint(no-console): Unexpected console statement.
-    ,-[test.astro:26:1]
- 25 | // eslint-disable-next-line no-console, no-debugger
- 26 | console.log('yes'); debugger;
-    : ^^^^^^^^^^^
+  ! Unused eslint-disable directive (no problems were reported from no-debugger).
+    ,-[test.astro:28:41]
  27 | 
-    `----
-  help: Delete this console statement.
-
-  ! eslint(no-debugger): `debugger` statement is not allowed
-    ,-[test.astro:26:21]
- 25 | // eslint-disable-next-line no-console, no-debugger
- 26 | console.log('yes'); debugger;
-    :                     ^^^^^^^^^
- 27 | 
-    `----
-  help: Remove the debugger statement
-
-  ! eslint(no-console): Unexpected console statement.
-    ,-[test.astro:29:1]
  28 | // eslint-disable-next-line no-console, no-debugger
+    :                                         ^^^^^^^^^^^
  29 | console.log('no');
-    : ^^^^^^^^^^^
- 30 | 
     `----
-  help: Delete this console statement.
+
+  ! Unused eslint-disable directive (no problems were reported).
+    ,-[test.astro:31:3]
+ 30 | 
+ 31 | // oxlint-disable-next-line no-debugger, no-for-loop
+    :   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 32 | console.log("complete line");
+    `----
 
   ! eslint(no-console): Unexpected console statement.
     ,-[test.astro:32:1]
@@ -144,6 +114,14 @@ working directory: fixtures/report_unused_directives
  33 | 
     `----
   help: Delete this console statement.
+
+  ! Unused eslint-enable directive (no matching eslint-disable directives were found).
+    ,-[test.astro:36:3]
+ 35 | 
+ 36 | // eslint-enable
+    :   ^^^^^^^^^^^^^^
+ 37 | </script>
+    `----
 
   ! Unused eslint-disable directive (no problems were reported).
    ,-[test.js:4:3]
@@ -334,7 +312,7 @@ working directory: fixtures/report_unused_directives
  37 | </script>
     `----
 
-Found 38 warnings and 0 errors.
+Found 37 warnings and 0 errors.
 Finished in <variable>ms on 5 files with 94 rules using 1 threads.
 ----------
 CLI result: LintSucceeded

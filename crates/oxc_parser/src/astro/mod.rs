@@ -219,9 +219,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
     /// Parse an Astro `<script>` element.
     ///
-    /// According to Astro spec:
-    /// - Bare `<script>` (no attributes) = TypeScript, parsed as AstroScript
-    /// - `<script>` with any attributes = follows HTML rules, treated as raw text
+    /// According to the Astro spec and HTML rules:
+    /// - `<script>` with no `type` attribute, or with a JS/module MIME `type` →
+    ///   parsed as TypeScript/JavaScript (`AstroScript`)
+    /// - `<script type="text/css">` (or any other non-JS `type`) →
+    ///   raw text (not parsed)
+    ///
+    /// Non-`type` attributes (e.g. `defer`, `src`, `is:inline`) do **not** affect
+    /// whether the content is parsed.
     #[expect(clippy::cast_possible_truncation)]
     fn parse_astro_script(&mut self, span: u32) -> JSXChild<'a> {
         // We're at `script` identifier after `<`
@@ -230,7 +235,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         // Parse attributes using the Astro JSX attribute parser
         let attributes = self.parse_astro_jsx_attributes();
-        let has_attributes = !attributes.is_empty();
+        let has_attributes = Self::is_raw_text_script(&attributes);
 
         // Check for self-closing `/>`
         let is_self_closing = if self.at(Kind::Slash) {
@@ -302,8 +307,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             ));
         }
 
-        // Find the closing </script> tag
-        let content_start = self.cur_token().span().start as usize;
+        // Find the closing </script> tag.
+        // Use `prev_token_end` (right after `>`) instead of `cur_token().span().start` so
+        // that leading trivia (e.g. `// eslint-disable-next-line` comments) before the first
+        // real token is included in the content span and picked up by the parser.
+        let content_start = self.prev_token_end as usize;
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
@@ -1526,29 +1534,61 @@ const user: User = { id: 1, name: "test" };
     }
 
     #[test]
-    fn parse_astro_script_with_attributes_not_parsed() {
+    fn parse_astro_script_type_module_is_parsed() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        // <script> with attributes should NOT be parsed, just raw text
+        // <script type="module"> is a JS MIME type — should be parsed as AstroScript
         let source = r#"<script type="module">
-// This is JavaScript, not TypeScript
+// This is JavaScript
 const x = 1;
 </script>"#;
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Body should have one JSX Element (not AstroScript)
+        // Body should have one <script> Element containing an AstroScript (parsed)
         assert_eq!(ret.root.body.len(), 1);
         match &ret.root.body[0] {
             JSXChild::Element(element) => {
-                // Should be a script element with text content
                 if let JSXElementName::Identifier(ident) = &element.opening_element.name {
                     assert_eq!(ident.name.as_str(), "script");
                 } else {
                     panic!("Expected Identifier for script element");
                 }
-                // Should have text child
+                // Should have one AstroScript child (parsed content)
+                assert_eq!(element.children.len(), 1, "Expected 1 child (AstroScript)");
+                assert!(
+                    matches!(element.children[0], JSXChild::AstroScript(_)),
+                    "Expected AstroScript, got {:?}",
+                    element.children[0]
+                );
+            }
+            other => panic!("Expected Element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_astro_script_non_js_type_is_raw_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        // <script type="text/css"> is NOT a JS MIME type — should be raw text
+        let source = r#"<script type="text/css">
+h1 { color: red; }
+</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Body should have one JSX Element with raw text content (not AstroScript)
+        assert_eq!(ret.root.body.len(), 1);
+        match &ret.root.body[0] {
+            JSXChild::Element(element) => {
+                if let JSXElementName::Identifier(ident) = &element.opening_element.name {
+                    assert_eq!(ident.name.as_str(), "script");
+                } else {
+                    panic!("Expected Identifier for script element");
+                }
+                // Should have text child (raw, unparsed content)
                 assert_eq!(element.children.len(), 1);
                 assert!(matches!(element.children[0], JSXChild::Text(_)));
             }
@@ -1557,10 +1597,10 @@ const x = 1;
     }
 
     #[test]
-    fn parse_astro_script_defer_not_parsed() {
+    fn parse_astro_script_defer_is_parsed() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        // <script defer> should NOT be parsed as TypeScript
+        // <script defer> has no `type` attribute → should be parsed as AstroScript
         let source = r#"<script defer>
 console.log("hello");
 </script>"#;
@@ -1568,9 +1608,19 @@ console.log("hello");
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Body should have one JSX Element (not AstroScript)
+        // Body should have one <script> Element containing an AstroScript (parsed)
         assert_eq!(ret.root.body.len(), 1);
-        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+        match &ret.root.body[0] {
+            JSXChild::Element(element) => {
+                assert_eq!(element.children.len(), 1, "Expected 1 child (AstroScript)");
+                assert!(
+                    matches!(element.children[0], JSXChild::AstroScript(_)),
+                    "Expected AstroScript child, got {:?}",
+                    element.children[0]
+                );
+            }
+            other => panic!("Expected Element, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1674,7 +1724,9 @@ return;
     fn test_expression_container_whitespace_spans() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        // Expression container with whitespace around the inner element
+        // Expression container with whitespace around the inner element.
+        // Leading whitespace is skipped by the JS tokeniser (insignificant).
+        // Trailing whitespace (`\n` before `}`) is preserved as a JSXText child.
         let source = "{\n\t<div>Hello</div>\n}";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
 
@@ -1689,18 +1741,28 @@ return;
                 &source[container.span.start as usize..container.span.end as usize];
             assert_eq!(container_text, source, "Container should span entire source");
 
-            // Get the expression span
-            let expr_span = container.expression.span();
-
-            // Calculate leading/trailing whitespace from spans
-            let leading_ws = &source[(container.span.start + 1) as usize..expr_span.start as usize];
-            let trailing_ws = &source[expr_span.end as usize..(container.span.end - 1) as usize];
-
-            // The leading whitespace should be "\n\t" (newline + tab)
-            assert_eq!(leading_ws, "\n\t", "Leading whitespace should be preserved in span");
-
-            // The trailing whitespace should be "\n" (newline before closing brace)
-            assert_eq!(trailing_ws, "\n", "Trailing whitespace should be preserved in span");
+            // The expression is a fragment [Element(<div>), Text("\n")] because trailing
+            // whitespace before `}` is preserved as a JSXText child.
+            assert!(
+                matches!(container.expression, JSXExpression::JSXFragment(_)),
+                "Expression should be a JSXFragment wrapping the element and trailing whitespace"
+            );
+            if let JSXExpression::JSXFragment(ref frag) = container.expression {
+                assert_eq!(frag.children.len(), 2, "Fragment should have element + trailing text");
+                assert!(
+                    matches!(frag.children[0], JSXChild::Element(_)),
+                    "First child should be div element"
+                );
+                if let JSXChild::Text(ref text) = frag.children[1] {
+                    assert_eq!(
+                        text.value.as_str(),
+                        "\n",
+                        "Trailing whitespace should be preserved as JSXText"
+                    );
+                } else {
+                    panic!("Second child should be JSXText for trailing whitespace");
+                }
+            }
         } else {
             panic!("Expected JSXChild::ExpressionContainer");
         }
@@ -1951,7 +2013,7 @@ return;
     }
 
     #[test]
-    fn parse_astro_nested_script_with_attributes_not_parsed() {
+    fn parse_astro_nested_script_with_non_type_attributes_is_parsed() {
         // Helper to recursively find AstroScript nodes
         fn count_astro_scripts(children: &oxc_allocator::Vec<JSXChild>) -> usize {
             let mut count = 0;
@@ -1972,7 +2034,7 @@ return;
 
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        // <script> with attributes inside other elements should NOT be parsed
+        // <script is:inline> has no `type` attribute → should be parsed as AstroScript
         let source = r"<html>
 <head>
   <script is:inline>
@@ -1984,11 +2046,11 @@ return;
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Should find 0 AstroScript nodes (script has attributes)
+        // Should find 1 AstroScript node (only `type` suppresses parsing)
         let script_count = count_astro_scripts(&ret.root.body);
         assert_eq!(
-            script_count, 0,
-            "Expected 0 AstroScript nodes (script has attributes), found {script_count}"
+            script_count, 1,
+            "Expected 1 AstroScript node (is:inline does not suppress parsing), found {script_count}"
         );
     }
 
@@ -3047,10 +3109,8 @@ return;
     }
 
     #[test]
-    fn astro_script_with_attributes_content_is_text() {
-        // In Astro, <script> WITH attributes is treated like HTML (raw text, not parsed)
-        // This follows Astro's convention: bare script = island script (parsed),
-        // script with attrs = regular HTML script (not parsed by Astro)
+    fn astro_script_type_module_content_is_parsed() {
+        // <script type="module"> uses a JS MIME type → content should be parsed (AstroScript)
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         let source = r#"<script type="module">console.log("hello");</script>"#;
@@ -3059,23 +3119,46 @@ return;
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Script with attributes is a regular JSX Element with text content
+        // Script with JS MIME type is parsed as AstroScript
         assert_eq!(ret.root.body.len(), 1);
         if let JSXChild::Element(script_el) = &ret.root.body[0] {
             if let JSXElementName::Identifier(ident) = &script_el.opening_element.name {
                 assert_eq!(ident.name.as_str(), "script");
             }
-            // Script with attributes has JSXText child (NOT parsed)
             assert_eq!(script_el.children.len(), 1, "Script should have 1 child");
-            match &script_el.children[0] {
-                JSXChild::Text(text) => {
-                    // Content is raw text, just like regular JSX
-                    assert_eq!(text.value.as_str(), r#"console.log("hello");"#);
-                }
-                other => panic!(
-                    "Astro script with attributes should have JSXText content, got {other:?}"
-                ),
+            assert!(
+                matches!(script_el.children[0], JSXChild::AstroScript(_)),
+                "Expected AstroScript child, got {:?}",
+                script_el.children[0]
+            );
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn astro_script_non_js_type_content_is_text() {
+        // <script type="application/json"> is a non-JS type → content is raw text
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script type="application/json">{"key":"value"}</script>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        // Script with non-JS type is a raw text element
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(script_el) = &ret.root.body[0] {
+            if let JSXElementName::Identifier(ident) = &script_el.opening_element.name {
+                assert_eq!(ident.name.as_str(), "script");
             }
+            assert_eq!(script_el.children.len(), 1, "Script should have 1 child");
+            assert!(
+                matches!(script_el.children[0], JSXChild::Text(_)),
+                "Expected JSXText child for non-JS type, got {:?}",
+                script_el.children[0]
+            );
         } else {
             panic!("Expected Element");
         }

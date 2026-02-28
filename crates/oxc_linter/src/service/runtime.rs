@@ -1132,14 +1132,36 @@ impl Runtime {
         // Allocate the root first, then get comments reference from it
         let root = allocator.alloc(ret.root);
 
-        // Get comments from frontmatter if available, otherwise use empty
-        let comments: &oxc_allocator::Vec<'_, oxc_ast::ast::Comment> =
+        // Collect comments from all sources:
+        //   1. Frontmatter (`--- ... ---`) — stored on `frontmatter.program.comments`
+        //   2. `<script>` blocks          — stored on each `AstroScript.program.comments`
+        //   3. Template body              — comments inside expression containers `{ }` and
+        //                                   JSX attributes; live only in `ret.body_comments`
+        //                                   because the body parser's trivia builder is not
+        //                                   attached to any AST node.
+        //
+        // All spans are absolute byte offsets into `source_text`, so they can be merged
+        // directly.  Without this merge, `// eslint-disable-next-line` in any of these
+        // positions would be invisible to `DisableDirectivesBuilder`.
+        let comments: &oxc_allocator::Vec<'_, oxc_ast::ast::Comment> = {
+            let mut merged = oxc_allocator::Vec::new_in(allocator);
+
+            // 1. Frontmatter comments
             if let Some(ref frontmatter) = root.frontmatter {
-                &frontmatter.program.comments
-            } else {
-                // Create an empty comments vec
-                allocator.alloc(oxc_allocator::Vec::new_in(allocator))
-            };
+                merged.extend_from_slice(&frontmatter.program.comments);
+            }
+
+            // 2. <script> block comments — walk the body looking for AstroScript nodes.
+            collect_astro_script_comments(&root.body, &mut merged);
+
+            // 3. Body (template) comments — expression containers, JSX attributes, etc.
+            merged.extend_from_slice(&ret.body_comments);
+
+            // Sort by span start so the interval builder sees them in source order.
+            merged.sort_unstable_by_key(|c| c.span.start);
+
+            allocator.alloc(merged)
+        };
 
         // Build semantic using our new Astro-aware method
         let semantic_ret = SemanticBuilder::new()
@@ -1194,5 +1216,36 @@ impl Runtime {
         }
 
         smallvec::smallvec![Ok(ResolvedModuleRecord { module_record, resolved_module_requests })]
+    }
+}
+
+/// Recursively collect comments from all `AstroScript` nodes in an Astro JSX body.
+///
+/// Astro `<script>` blocks are represented in the AST as `JSXElement` nodes whose
+/// children contain a single `JSXChild::AstroScript`.  The script's `Program` holds
+/// its own `comments` vec with byte spans that are already absolute (relative to the
+/// start of the full `.astro` source text), so they can be merged directly with
+/// frontmatter comments and fed to `DisableDirectivesBuilder`.
+#[cfg(feature = "astro")]
+fn collect_astro_script_comments<'a>(
+    children: &oxc_allocator::Vec<'a, oxc_ast::ast::JSXChild<'a>>,
+    out: &mut oxc_allocator::Vec<'a, oxc_ast::ast::Comment>,
+) {
+    use oxc_ast::ast::JSXChild;
+
+    for child in children {
+        match child {
+            JSXChild::AstroScript(script) => {
+                out.extend_from_slice(&script.program.comments);
+            }
+            JSXChild::Element(el) => {
+                // <script> blocks are wrapped as JSXElement children containing AstroScript
+                collect_astro_script_comments(&el.children, out);
+            }
+            JSXChild::Fragment(frag) => {
+                collect_astro_script_comments(&frag.children, out);
+            }
+            _ => {}
+        }
     }
 }

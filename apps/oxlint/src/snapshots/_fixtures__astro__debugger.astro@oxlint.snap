@@ -7,24 +7,24 @@ working directory:
 ----------
 
   ! eslint(no-debugger): `debugger` statement is not allowed
-   ,-[fixtures/astro/debugger.astro:2:1]
- 1 | ---
- 2 | debugger
-   : ^^^^^^^^
- 3 | ---
-   `----
-  help: Remove the debugger statement
-
-  ! eslint(no-debugger): `debugger` statement is not allowed
-    ,-[fixtures/astro/debugger.astro:19:3]
- 18 | <script>
- 19 |   debugger
+    ,-[fixtures/astro/debugger.astro:12:3]
+ 11 | <script asdf >
+ 12 |   debugger
     :   ^^^^^^^^
- 20 | </script>
+ 13 | </script>
     `----
   help: Remove the debugger statement
 
-Found 4 warnings and 0 errors.
+  ! eslint(no-debugger): `debugger` statement is not allowed
+    ,-[fixtures/astro/debugger.astro:16:3]
+ 15 | <script asdf>
+ 16 |   debugger
+    :   ^^^^^^^^
+ 17 | </script>
+    `----
+  help: Remove the debugger statement
+
+Found 2 warnings and 0 errors.
 Finished in <variable>ms on 1 file with 93 rules using 1 threads.
 ----------
 CLI result: LintSucceeded

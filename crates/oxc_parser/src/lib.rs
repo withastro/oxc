@@ -608,12 +608,22 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// If `body_start` is provided, the lexer will start parsing from that position.
     /// Otherwise, it will start from the beginning of the source.
     ///
-    /// Returns the body children, errors, and whether the parser panicked.
+    /// Returns the body children, errors, whether the parser panicked, and JS-style comments
+    /// encountered during body parsing (e.g. inside expression containers or JSX attributes).
+    /// These comments have absolute byte-offset spans into the original source text and must be
+    /// merged with frontmatter and `<script>`-block comments before being fed to
+    /// `DisableDirectivesBuilder`, so that `eslint-disable` directives work everywhere in the
+    /// template.
     #[cfg(feature = "astro")]
     pub fn parse_astro_body_only(
         mut self,
         body_start: Option<usize>,
-    ) -> (oxc_allocator::Vec<'a, oxc_ast::ast::JSXChild<'a>>, Vec<OxcDiagnostic>, bool) {
+    ) -> (
+        oxc_allocator::Vec<'a, oxc_ast::ast::JSXChild<'a>>,
+        Vec<OxcDiagnostic>,
+        bool,
+        Vec<oxc_ast::ast::Comment>,
+    ) {
         // If body_start is provided, skip to that position
         if let Some(start) = body_start {
             #[expect(clippy::cast_possible_truncation)]
@@ -643,7 +653,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         errors.extend(self.lexer.errors);
         errors.extend(self.errors);
 
-        (body, errors, panicked)
+        // Collect JS-style comments seen by the body parser (e.g. inside `{ }` expression
+        // containers or JSX attributes).  These carry absolute byte offsets into the original
+        // source, so they can be merged directly with frontmatter / script-block comments.
+        let body_comments = self.lexer.trivia_builder.comments;
+
+        (body, errors, panicked, body_comments)
     }
 
     #[expect(clippy::cast_possible_truncation)]
