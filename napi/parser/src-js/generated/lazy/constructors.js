@@ -11771,8 +11771,6 @@ function constructCommentKind(pos, ast) {
       return "Block";
     case 2:
       return "Block";
-    case 3:
-      return "Html";
     default:
       throw new Error(`Unexpected discriminant ${ast.buffer[pos]} for CommentKind`);
   }

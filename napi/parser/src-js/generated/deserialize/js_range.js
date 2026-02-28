@@ -4641,8 +4641,6 @@ function deserializeCommentKind(pos) {
       return "Block";
     case 2:
       return "Block";
-    case 3:
-      return "Html";
     default:
       throw Error(`Unexpected discriminant ${uint8[pos]} for CommentKind`);
   }
