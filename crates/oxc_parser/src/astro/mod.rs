@@ -436,7 +436,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 mod test {
     use oxc_allocator::Allocator;
     use oxc_ast::ast::{JSXChild, JSXElementName, JSXExpression, Statement};
-    use oxc_span::{GetSpan, SourceType};
+    use oxc_span::SourceType;
 
     use crate::Parser;
 
