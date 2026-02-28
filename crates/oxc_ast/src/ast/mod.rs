@@ -188,11 +188,15 @@ pub(crate) mod jsx;
 pub(crate) mod literal;
 pub(crate) mod macros;
 pub(crate) mod ts;
+// Purposefull put at the bottom to not offset JS/TS code
+pub(crate) mod astro;
 
 pub use comment::*;
 pub use js::*;
 pub use jsx::*;
 pub use literal::*;
 pub use ts::*;
+// Purposefull put at the bottom to not offset JS/TS code
+pub use astro::*;
 
 use macros::inherit_variants;

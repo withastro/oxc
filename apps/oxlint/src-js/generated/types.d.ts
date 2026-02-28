@@ -1068,7 +1068,15 @@ export interface JSXIdentifier extends Span {
   parent: Node;
 }
 
-export type JSXChild = JSXText | JSXElement | JSXFragment | JSXExpressionContainer | JSXSpreadChild;
+export type JSXChild =
+  | JSXText
+  | JSXElement
+  | JSXFragment
+  | JSXExpressionContainer
+  | JSXSpreadChild
+  | AstroScript
+  | AstroDoctype
+  | AstroComment;
 
 export interface JSXSpreadChild extends Span {
   type: "JSXSpreadChild";
@@ -1677,6 +1685,37 @@ export interface JSDocUnknownType extends Span {
   parent: Node;
 }
 
+export interface AstroRoot extends Span {
+  type: "AstroRoot";
+  frontmatter: AstroFrontmatter | null;
+  body: Array<JSXChild>;
+  parent: Node;
+}
+
+export interface AstroFrontmatter extends Span {
+  type: "AstroFrontmatter";
+  program: Program;
+  parent: Node;
+}
+
+export interface AstroScript extends Span {
+  type: "AstroScript";
+  program: Program;
+  parent: Node;
+}
+
+export interface AstroDoctype extends Span {
+  type: "AstroDoctype";
+  value: string;
+  parent: Node;
+}
+
+export interface AstroComment extends Span {
+  type: "AstroComment";
+  value: string;
+  parent: Node;
+}
+
 export type AssignmentOperator =
   | "="
   | "+="
@@ -1910,4 +1949,9 @@ export type Node =
   | JSDocNullableType
   | JSDocNonNullableType
   | JSDocUnknownType
+  | AstroRoot
+  | AstroFrontmatter
+  | AstroScript
+  | AstroDoctype
+  | AstroComment
   | ParamPattern;

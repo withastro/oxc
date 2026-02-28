@@ -1,8 +1,7 @@
 use oxc_span::Span;
 
-use crate::{config::LexerConfig as Config, diagnostics};
-
 use super::{Kind, Lexer, Token};
+use crate::{config::LexerConfig as Config, diagnostics};
 
 impl<C: Config> Lexer<'_, C> {
     /// Section 12.8 Punctuators
@@ -37,8 +36,11 @@ impl<C: Config> Lexer<'_, C> {
             Some(b'!') if self.remaining().starts_with("!--") => {
                 if self.source_type.is_module() {
                     if self.token.is_on_new_line() {
-                        let span = Span::new(self.token.start(), self.token.start() + 4);
-                        self.errors.push(diagnostics::html_comment_in_module(span));
+                        // In Astro files, HTML comments are valid even in module/expression context.
+                        if !self.source_type.is_astro() {
+                            let span = Span::new(self.token.start(), self.token.start() + 4);
+                            self.errors.push(diagnostics::html_comment_in_module(span));
+                        }
                         None
                     } else {
                         // In middle of expression (e.g. `foo <!--bar`) - parse as `<`

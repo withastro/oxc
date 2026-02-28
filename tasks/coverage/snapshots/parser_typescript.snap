@@ -21879,12 +21879,12 @@ Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/parser/ecmasc
  13 │ function noName() { }
     ╰────
 
-  × Invalid characters after number
-    ╭─[typescript/tests/cases/conformance/jsx/tsxAttributeInvalidNames.tsx:10:10]
-  9 │ // Invalid names
- 10 │ <test1 32data={32} />;
-    ·          ────
- 11 │ <test2 -data={32} />;
+  × Expected `>` but found `EOF`
+    ╭─[typescript/tests/cases/conformance/jsx/tsxAttributeInvalidNames.tsx:10:8]
+  9 │     // Invalid names
+ 10 │ ╭─▶ <test1 32data={32} />;
+ 11 │ ├─▶ <test2 -data={32} />;
+    · ╰──── `>` expected
     ╰────
 
   × Unexpected token

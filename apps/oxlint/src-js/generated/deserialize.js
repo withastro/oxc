@@ -3827,6 +3827,12 @@ function deserializeJSXChild(pos) {
       return deserializeBoxJSXExpressionContainer(pos + 8);
     case 4:
       return deserializeBoxJSXSpreadChild(pos + 8);
+    case 5:
+      return deserializeBoxAstroScript(pos + 8);
+    case 6:
+      return deserializeBoxAstroDoctype(pos + 8);
+    case 7:
+      return deserializeBoxAstroComment(pos + 8);
     default:
       throw Error(`Unexpected discriminant ${uint8[pos]} for JSXChild`);
   }
@@ -5771,6 +5777,50 @@ function deserializeComment(pos) {
   };
 }
 
+function deserializeAstroScript(pos) {
+  let start,
+    end,
+    previousParent = parent,
+    node = (parent = {
+      __proto__: NodeProto,
+      type: "AstroScript",
+      program: null,
+      start: (start = deserializeU32(pos)),
+      end: (end = deserializeU32(pos + 4)),
+      range: [start, end],
+      parent,
+    });
+  node.program = deserializeProgram(pos + 8);
+  parent = previousParent;
+  return node;
+}
+
+function deserializeAstroDoctype(pos) {
+  let start, end;
+  return {
+    __proto__: NodeProto,
+    type: "AstroDoctype",
+    value: deserializeStr(pos + 8),
+    start: (start = deserializeU32(pos)),
+    end: (end = deserializeU32(pos + 4)),
+    range: [start, end],
+    parent,
+  };
+}
+
+function deserializeAstroComment(pos) {
+  let start, end;
+  return {
+    __proto__: NodeProto,
+    type: "AstroComment",
+    value: deserializeStr(pos + 8),
+    start: (start = deserializeU32(pos)),
+    end: (end = deserializeU32(pos + 4)),
+    range: [start, end],
+    parent,
+  };
+}
+
 function deserializeAssignmentOperator(pos) {
   switch (uint8[pos]) {
     case 0:
@@ -6846,6 +6896,18 @@ function deserializeBoxJSXText(pos) {
 
 function deserializeBoxJSXSpreadChild(pos) {
   return deserializeJSXSpreadChild(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroScript(pos) {
+  return deserializeAstroScript(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroDoctype(pos) {
+  return deserializeAstroDoctype(uint32[pos >> 2]);
+}
+
+function deserializeBoxAstroComment(pos) {
+  return deserializeAstroComment(uint32[pos >> 2]);
 }
 
 function deserializeVecTSEnumMember(pos) {

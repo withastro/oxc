@@ -90,6 +90,8 @@ pub enum LanguageVariant {
     Standard = 0,
     /// For sources using JSX or TSX
     Jsx = 1,
+    /// For Astro files (`.astro`), which have frontmatter (TypeScript) and HTML body with JSX expressions
+    Astro = 2,
 }
 
 impl Default for SourceType {
@@ -116,7 +118,8 @@ impl ContentEq for SourceType {
 }
 
 /// Valid file extensions.
-pub const VALID_EXTENSIONS: &[&str] = &["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
+pub const VALID_EXTENSIONS: &[&str] =
+    &["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx", "astro"];
 
 /// Valid file extension.
 #[ast]
@@ -139,6 +142,8 @@ pub enum FileExtension {
     Cts = 6,
     /// `.tsx` file extension
     Tsx = 7,
+    /// `.astro` file extension
+    Astro = 8,
 }
 
 impl FileExtension {
@@ -184,6 +189,7 @@ impl FromStr for FileExtension {
             "mts" => Ok(FileExtension::Mts),
             "cts" => Ok(FileExtension::Cts),
             "tsx" => Ok(FileExtension::Tsx),
+            "astro" => Ok(FileExtension::Astro),
             _ => Err(UnknownExtension::new("Unknown extension.")),
         }
     }
@@ -196,14 +202,15 @@ impl From<FileExtension> for SourceType {
 
         let language = match file_ext {
             Js | Cjs | Mjs | Jsx => Language::JavaScript,
-            Ts | Tsx | Mts | Cts => Language::TypeScript,
+            // Astro frontmatter is TypeScript
+            Ts | Tsx | Mts | Cts | Astro => Language::TypeScript,
         };
 
         let module_kind = match file_ext {
             // Ambiguous extensions need content-based detection (import/export → ESM, otherwise Script)
             Js | Jsx | Ts | Tsx => ModuleKind::Unambiguous,
-            // Explicit ESM extensions
-            Mts | Mjs => ModuleKind::Module,
+            // Explicit ESM extensions (Astro files are always modules)
+            Mts | Mjs | Astro => ModuleKind::Module,
             // Explicit CommonJS extensions
             Cjs | Cts => ModuleKind::CommonJS,
         };
@@ -211,6 +218,7 @@ impl From<FileExtension> for SourceType {
         let variant = match file_ext {
             Jsx | Tsx => LanguageVariant::Jsx,
             Js | Mjs | Cjs | Ts | Mts | Cts => LanguageVariant::Standard,
+            Astro => LanguageVariant::Astro,
         };
 
         SourceType { language, module_kind, variant, extension: Some(file_ext) }
@@ -385,6 +393,28 @@ impl SourceType {
         }
     }
 
+    /// Creates a [`SourceType`] representing an Astro file.
+    ///
+    /// Astro files have TypeScript frontmatter and HTML body with JSX expressions.
+    ///
+    /// ## Example
+    /// ```
+    /// # use oxc_span::SourceType;
+    ///
+    /// let astro = SourceType::astro();
+    /// assert!(astro.is_typescript());
+    /// assert!(astro.is_astro());
+    /// assert!(astro.is_module());
+    /// ```
+    pub const fn astro() -> Self {
+        Self {
+            language: Language::TypeScript,
+            module_kind: ModuleKind::Module,
+            variant: LanguageVariant::Astro,
+            extension: Some(FileExtension::Astro),
+        }
+    }
+
     /// Returns `true` if this [`SourceType`] is [script].
     ///
     /// [script]: ModuleKind::Script
@@ -439,8 +469,14 @@ impl SourceType {
     /// Returns `true` if this source type is using JSX.
     ///
     /// Note that TSX is considered JSX in this context.
+    /// Astro files also use JSX syntax for their templates.
     pub fn is_jsx(self) -> bool {
-        self.variant == LanguageVariant::Jsx
+        matches!(self.variant, LanguageVariant::Jsx | LanguageVariant::Astro)
+    }
+
+    /// Returns `true` if this source type is an Astro file.
+    pub fn is_astro(self) -> bool {
+        self.variant == LanguageVariant::Astro
     }
 
     /// Does this source type implicitly use strict mode semantics?
@@ -559,6 +595,18 @@ impl SourceType {
     pub const fn with_standard(mut self, yes: bool) -> Self {
         if yes {
             self.variant = LanguageVariant::Standard;
+        }
+        self
+    }
+
+    /// Mark this [`SourceType`] as an [Astro] file if `yes` is `true`. No change
+    /// will occur if `yes` is `false`.
+    ///
+    /// [Astro]: LanguageVariant::Astro
+    #[must_use]
+    pub const fn with_astro(mut self, yes: bool) -> Self {
+        if yes {
+            self.variant = LanguageVariant::Astro;
         }
         self
     }

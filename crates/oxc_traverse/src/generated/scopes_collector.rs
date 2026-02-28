@@ -1439,9 +1439,12 @@ impl<'a> Visit<'a> for ChildScopeCollector {
             JSXChild::Fragment(it) => self.visit_jsx_fragment(it),
             JSXChild::ExpressionContainer(it) => self.visit_jsx_expression_container(it),
             JSXChild::Spread(it) => self.visit_jsx_spread_child(it),
+            JSXChild::AstroScript(it) => self.visit_astro_script(it),
             _ => {
                 // Remaining variants do not contain scopes:
                 // `Text`
+                // `AstroDoctype`
+                // `AstroComment`
             }
         }
     }
@@ -2017,6 +2020,34 @@ impl<'a> Visit<'a> for ChildScopeCollector {
 
     #[inline(always)]
     fn visit_js_doc_unknown_type(&mut self, it: &JSDocUnknownType) {
+        // Struct does not contain a scope. Halt traversal.
+    }
+
+    #[inline]
+    fn visit_astro_root(&mut self, it: &AstroRoot<'a>) {
+        if let Some(frontmatter) = &it.frontmatter {
+            self.visit_astro_frontmatter(frontmatter);
+        }
+        self.visit_jsx_children(&it.body);
+    }
+
+    #[inline]
+    fn visit_astro_frontmatter(&mut self, it: &AstroFrontmatter<'a>) {
+        self.visit_program(&it.program);
+    }
+
+    #[inline]
+    fn visit_astro_script(&mut self, it: &AstroScript<'a>) {
+        self.visit_program(&it.program);
+    }
+
+    #[inline(always)]
+    fn visit_astro_doctype(&mut self, it: &AstroDoctype<'a>) {
+        // Struct does not contain a scope. Halt traversal.
+    }
+
+    #[inline(always)]
+    fn visit_astro_comment(&mut self, it: &AstroComment<'a>) {
         // Struct does not contain a scope. Halt traversal.
     }
 

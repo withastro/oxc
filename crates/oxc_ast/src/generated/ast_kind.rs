@@ -10,7 +10,7 @@ use oxc_syntax::node::NodeId;
 use crate::ast::*;
 
 /// The largest integer value that can be mapped to an `AstType`/`AstKind` enum variant.
-pub const AST_TYPE_MAX: u8 = 187;
+pub const AST_TYPE_MAX: u8 = 192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -203,6 +203,11 @@ pub enum AstType {
     JSDocNullableType = 185,
     JSDocNonNullableType = 186,
     JSDocUnknownType = 187,
+    AstroRoot = 188,
+    AstroFrontmatter = 189,
+    AstroScript = 190,
+    AstroDoctype = 191,
+    AstroComment = 192,
 }
 
 /// Untyped AST Node Kind
@@ -415,6 +420,11 @@ pub enum AstKind<'a> {
     JSDocNullableType(&'a JSDocNullableType<'a>) = AstType::JSDocNullableType as u8,
     JSDocNonNullableType(&'a JSDocNonNullableType<'a>) = AstType::JSDocNonNullableType as u8,
     JSDocUnknownType(&'a JSDocUnknownType) = AstType::JSDocUnknownType as u8,
+    AstroRoot(&'a AstroRoot<'a>) = AstType::AstroRoot as u8,
+    AstroFrontmatter(&'a AstroFrontmatter<'a>) = AstType::AstroFrontmatter as u8,
+    AstroScript(&'a AstroScript<'a>) = AstType::AstroScript as u8,
+    AstroDoctype(&'a AstroDoctype<'a>) = AstType::AstroDoctype as u8,
+    AstroComment(&'a AstroComment<'a>) = AstType::AstroComment as u8,
 }
 
 impl AstKind<'_> {
@@ -620,6 +630,11 @@ impl AstKind<'_> {
             Self::JSDocNullableType(it) => it.node_id(),
             Self::JSDocNonNullableType(it) => it.node_id(),
             Self::JSDocUnknownType(it) => it.node_id(),
+            Self::AstroRoot(_) => NodeId::DUMMY,
+            Self::AstroFrontmatter(_) => NodeId::DUMMY,
+            Self::AstroScript(_) => NodeId::DUMMY,
+            Self::AstroDoctype(_) => NodeId::DUMMY,
+            Self::AstroComment(_) => NodeId::DUMMY,
         }
     }
 
@@ -819,6 +834,11 @@ impl AstKind<'_> {
             Self::JSDocNullableType(it) => it.set_node_id(node_id),
             Self::JSDocNonNullableType(it) => it.set_node_id(node_id),
             Self::JSDocUnknownType(it) => it.set_node_id(node_id),
+            Self::AstroRoot(_) => {}
+            Self::AstroFrontmatter(_) => {}
+            Self::AstroScript(_) => {}
+            Self::AstroDoctype(_) => {}
+            Self::AstroComment(_) => {}
         }
     }
 }
@@ -1014,6 +1034,11 @@ impl GetSpan for AstKind<'_> {
             Self::JSDocNullableType(it) => it.span(),
             Self::JSDocNonNullableType(it) => it.span(),
             Self::JSDocUnknownType(it) => it.span(),
+            Self::AstroRoot(it) => it.span(),
+            Self::AstroFrontmatter(it) => it.span(),
+            Self::AstroScript(it) => it.span(),
+            Self::AstroDoctype(it) => it.span(),
+            Self::AstroComment(it) => it.span(),
         }
     }
 }
@@ -1209,6 +1234,11 @@ impl GetAddress for AstKind<'_> {
             Self::JSDocNullableType(it) => it.unstable_address(),
             Self::JSDocNonNullableType(it) => it.unstable_address(),
             Self::JSDocUnknownType(it) => it.unstable_address(),
+            Self::AstroRoot(it) => it.unstable_address(),
+            Self::AstroFrontmatter(it) => it.unstable_address(),
+            Self::AstroScript(it) => it.unstable_address(),
+            Self::AstroDoctype(it) => it.unstable_address(),
+            Self::AstroComment(it) => it.unstable_address(),
         }
     }
 }
@@ -2162,5 +2192,30 @@ impl<'a> AstKind<'a> {
     #[inline]
     pub fn as_js_doc_unknown_type(self) -> Option<&'a JSDocUnknownType> {
         if let Self::JSDocUnknownType(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_root(self) -> Option<&'a AstroRoot<'a>> {
+        if let Self::AstroRoot(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_frontmatter(self) -> Option<&'a AstroFrontmatter<'a>> {
+        if let Self::AstroFrontmatter(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_script(self) -> Option<&'a AstroScript<'a>> {
+        if let Self::AstroScript(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_doctype(self) -> Option<&'a AstroDoctype<'a>> {
+        if let Self::AstroDoctype(v) = self { Some(v) } else { None }
+    }
+
+    #[inline]
+    pub fn as_astro_comment(self) -> Option<&'a AstroComment<'a>> {
+        if let Self::AstroComment(v) = self { Some(v) } else { None }
     }
 }

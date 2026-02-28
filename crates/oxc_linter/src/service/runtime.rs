@@ -23,6 +23,8 @@ use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool, Vec as ArenaVec};
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, Error, OxcDiagnostic};
 use oxc_parser::{ParseOptions, Parser, Token, config::RuntimeParserConfig};
 use oxc_resolver::Resolver;
+#[cfg(feature = "astro")]
+use oxc_semantic::SemanticBuilderAstroExt;
 use oxc_semantic::{Semantic, SemanticBuilder};
 use oxc_span::{CompactStr, SourceType, VALID_EXTENSIONS};
 
@@ -129,7 +131,41 @@ struct SectionContent<'a> {
     semantic: Option<Semantic<'a>>,
     /// None if section parsing failed, or token collection was not requested.
     parser_tokens: Option<ArenaVec<'a, Token>>,
+
+    /// For Astro files: maps each `<script>` block's content byte range to its
+    /// `section_offset` (= the byte offset to use as the insertion anchor for
+    /// "disable for this whole file" / "disable for this line" code actions).
+    ///
+    /// Each entry is `(content_start, content_end, insert_offset)`:
+    /// - `content_start..content_end`: the byte range of the script block's content in the
+    ///   full `.astro` source text.
+    /// - `insert_offset`: the byte offset at which a "disable whole section" comment should
+    ///   be inserted (= the `\n` after the opening `<script>` tag, so that the LSP inserts
+    ///   the comment on the first line of the block's content).
+    ///
+    /// Entries are sorted by `content_start`. For diagnostics whose `span.start` falls
+    /// inside one of these ranges, `message.section_offset` is overridden with that entry's
+    /// `insert_offset`. All other diagnostics (frontmatter, template body) have their
+    /// `section_offset` set to `astro_frontmatter_offset` (see below).
+    #[cfg(feature = "astro")]
+    astro_section_map: Option<AstroSectionMap>,
+
+    /// For Astro files: the byte offset of the `\n` that terminates the opening `---` fence.
+    /// Passing this as `section_offset` to the LSP code-action helpers causes "disable for
+    /// this whole file" to insert inside the frontmatter (after `---\n`) rather than before
+    /// the opening `---`.
+    ///
+    /// `0` for non-Astro sections (no special handling).
+    #[cfg(feature = "astro")]
+    astro_frontmatter_offset: u32,
 }
+
+/// Per-`<script>`-block section boundaries for an Astro file.
+///
+/// Each entry: `(content_start, content_end, insert_offset)` — all byte offsets into the
+/// full `.astro` source text.
+#[cfg(feature = "astro")]
+type AstroSectionMap = Vec<(u32, u32, u32)>;
 
 /// A module with its source text and semantic, ready to be linted.
 ///
@@ -610,12 +646,19 @@ impl Runtime {
                             dep.section_contents.len()
                         );
 
+                        #[cfg(feature = "astro")]
+                        let mut astro_info: Option<(AstroSectionMap, u32)> = None;
+
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
                             .section_module_records
                             .into_iter()
                             .zip(dep.section_contents.drain(..))
                             .filter_map(|(record_result, section)| match record_result {
                                 Ok(module_record) => {
+                                    #[cfg(feature = "astro")]
+                                    if let Some(map) = section.astro_section_map {
+                                        astro_info = Some((map, section.astro_frontmatter_offset));
+                                    }
                                     Some(ContextSubHost::new_with_framework_options(
                                         section.semantic.unwrap(),
                                         Arc::clone(&module_record),
@@ -657,6 +700,14 @@ impl Runtime {
                                 .lock()
                                 .expect("disable_directives_map mutex poisoned")
                                 .insert(path.to_path_buf(), disable_directives);
+                        }
+
+                        // For Astro files, fix up section_offset per message so that
+                        // "disable for this section" code actions insert inside the right
+                        // block (script vs frontmatter) rather than always at byte 0.
+                        #[cfg(feature = "astro")]
+                        if let Some((ref map, frontmatter_offset)) = astro_info {
+                            apply_astro_section_offsets(&mut messages, map, frontmatter_offset);
                         }
 
                         if me.linter.options().fix.is_some() {
@@ -730,12 +781,20 @@ impl Runtime {
                             section_contents.len()
                         );
 
+                        #[cfg(feature = "astro")]
+                        let mut astro_info: Option<(AstroSectionMap, u32)> = None;
+
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
                             .section_module_records
                             .into_iter()
                             .zip(section_contents.drain(..))
                             .filter_map(|(record_result, section)| match record_result {
                                 Ok(module_record) => {
+                                    #[cfg(feature = "astro")]
+                                    if let Some(map) = section.astro_section_map {
+                                        astro_info =
+                                            Some((map, section.astro_frontmatter_offset));
+                                    }
                                     Some(ContextSubHost::new_with_framework_options(
                                         section.semantic.unwrap(),
                                         Arc::clone(&module_record),
@@ -763,7 +822,7 @@ impl Runtime {
 
                         let path = Path::new(&module_to_lint.path);
 
-                        let (section_messages, disable_directives) = me
+                        let (mut section_messages, disable_directives) = me
                             .linter
                             .run_with_disable_directives(path, context_sub_hosts, allocator_guard, me.js_allocator_pool());
 
@@ -774,9 +833,19 @@ impl Runtime {
                                 .insert(path.to_path_buf(), disable_directives);
                         }
 
-                        messages.lock().unwrap().extend(
-                            section_messages
-                        );
+                        // For Astro files, fix up section_offset per message so that
+                        // "disable for this section" code actions insert inside the right
+                        // block (script vs frontmatter) rather than always at byte 0.
+                        #[cfg(feature = "astro")]
+                        if let Some((ref map, frontmatter_offset)) = astro_info {
+                            apply_astro_section_offsets(
+                                &mut section_messages,
+                                map,
+                                frontmatter_offset,
+                            );
+                        }
+
+                        messages.lock().unwrap().extend(section_messages);
                     },
                 );
                 },
@@ -801,23 +870,39 @@ impl Runtime {
 
         let messages = Mutex::new(Vec::<Message>::new());
         rayon::scope(|scope| {
-            self.resolve_modules(file_system, &paths_set, scope, check_syntax_errors, Some(tx_error), |me, mut module| {
-                module.content.with_dependent_mut(
+            self.resolve_modules(
+                file_system,
+                &paths_set,
+                scope,
+                check_syntax_errors,
+                Some(tx_error),
+                |me, mut module| {
+                    module.content.with_dependent_mut(
                     |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
                         assert_eq!(module.section_module_records.len(), section_contents.len());
+
+                        #[cfg(feature = "astro")]
+                        let mut astro_info: Option<(AstroSectionMap, u32)> = None;
 
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module
                             .section_module_records
                             .into_iter()
                             .zip(section_contents.drain(..))
                             .filter_map(|(record_result, section)| match record_result {
-                                Ok(module_record) => Some(ContextSubHost::new_with_framework_options(
-                                    section.semantic.unwrap(),
-                                    Arc::clone(&module_record),
-                                    section.source.start,
-                                    section.source.framework_options,
-                                    section.parser_tokens,
-                                )),
+                                Ok(module_record) => {
+                                    #[cfg(feature = "astro")]
+                                    if let Some(map) = section.astro_section_map {
+                                        astro_info =
+                                            Some((map, section.astro_frontmatter_offset));
+                                    }
+                                    Some(ContextSubHost::new_with_framework_options(
+                                        section.semantic.unwrap(),
+                                        Arc::clone(&module_record),
+                                        section.source.start,
+                                        section.source.framework_options,
+                                        section.parser_tokens,
+                                    ))
+                                }
                                 Err(errors) => {
                                     if !errors.is_empty() {
                                         messages
@@ -837,17 +922,25 @@ impl Runtime {
                             return;
                         }
 
-                        messages.lock().unwrap().extend(
-                            me.linter.run(
-                                Path::new(&module.path),
-                                context_sub_hosts,
-                                allocator_guard
-                            )
-                            ,
+                        let mut run_messages = me.linter.run(
+                            Path::new(&module.path),
+                            context_sub_hosts,
+                            allocator_guard,
                         );
+
+                        // For Astro files, fix up section_offset per message so that
+                        // "disable for this section" code actions insert inside the right
+                        // block (script vs frontmatter) rather than always at byte 0.
+                        #[cfg(feature = "astro")]
+                        if let Some((ref map, frontmatter_offset)) = astro_info {
+                            apply_astro_section_offsets(&mut run_messages, map, frontmatter_offset);
+                        }
+
+                        messages.lock().unwrap().extend(run_messages);
                     },
                 );
-            });
+                },
+            );
         });
         messages.into_inner().unwrap()
     }
@@ -964,6 +1057,18 @@ impl Runtime {
         allocator: &'a Allocator,
         mut out_sections: Option<&mut SectionContents<'a>>,
     ) -> SmallVec<[Result<ResolvedModuleRecord, Vec<OxcDiagnostic>>; 1]> {
+        // Special handling for Astro files - use full AST parsing
+        #[cfg(feature = "astro")]
+        if ext == "astro" {
+            return self.process_astro_source(
+                path,
+                source_text,
+                allocator,
+                check_syntax_errors,
+                out_sections,
+            );
+        }
+
         let section_sources = PartialLoader::parse(ext, source_text)
             .unwrap_or_else(|| vec![JavaScriptSource::partial(source_text, source_type, 0)]);
 
@@ -985,6 +1090,10 @@ impl Runtime {
                             source: section_source,
                             semantic: Some(semantic),
                             parser_tokens,
+                            #[cfg(feature = "astro")]
+                            astro_section_map: None,
+                            #[cfg(feature = "astro")]
+                            astro_frontmatter_offset: 0,
                         });
                     }
                 }
@@ -1009,6 +1118,10 @@ impl Runtime {
                             source: section_source,
                             semantic: None,
                             parser_tokens: None,
+                            #[cfg(feature = "astro")]
+                            astro_section_map: None,
+                            #[cfg(feature = "astro")]
+                            astro_frontmatter_offset: 0,
                         });
                     }
                 }
@@ -1079,5 +1192,341 @@ impl Runtime {
             semantic,
             parser_tokens,
         ))
+    }
+
+    /// Process an Astro file using the full Astro parser.
+    /// This enables linting of both frontmatter code and JSX template.
+    #[cfg(feature = "astro")]
+    fn process_astro_source<'a>(
+        &self,
+        path: &Path,
+        source_text: &'a str,
+        allocator: &'a Allocator,
+        check_syntax_errors: bool,
+        mut out_sections: Option<&mut SectionContents<'a>>,
+    ) -> SmallVec<[Result<ResolvedModuleRecord, Vec<OxcDiagnostic>>; 1]> {
+        let source_type = SourceType::astro();
+
+        // Parse as Astro
+        let ret = Parser::new(allocator, source_text, source_type)
+            .with_options(ParseOptions {
+                parse_regular_expression: true,
+                allow_return_outside_function: true,
+                ..ParseOptions::default()
+            })
+            .parse_astro();
+
+        if !ret.errors.is_empty() {
+            let section_source = JavaScriptSource::new(source_text, source_type);
+            if let Some(sections) = &mut out_sections {
+                sections.push(SectionContent {
+                    source: section_source,
+                    semantic: None,
+                    parser_tokens: None,
+                    astro_section_map: None,
+                    astro_frontmatter_offset: 0,
+                });
+            }
+            return smallvec::smallvec![Err(ret.errors)];
+        }
+
+        // Allocate the root first, then get comments reference from it
+        let root = allocator.alloc(ret.root);
+
+        // Collect comments from all sources:
+        //   1. Frontmatter (`--- ... ---`) — stored on `frontmatter.program.comments`
+        //   2. `<script>` blocks          — stored on each `AstroScript.program.comments`
+        //   3. Template body              — comments inside expression containers `{ }` and
+        //                                   JSX attributes; live only in `ret.body_comments`
+        //                                   because the body parser's trivia builder is not
+        //                                   attached to any AST node.
+        //
+        // All spans are absolute byte offsets into `source_text`, so they can be merged
+        // directly.  Without this merge, `// eslint-disable-next-line` in any of these
+        // positions would be invisible to `DisableDirectivesBuilder`.
+        let comments: &oxc_allocator::Vec<'_, oxc_ast::ast::Comment> = {
+            let mut merged = oxc_allocator::Vec::new_in(allocator);
+
+            // 1. Frontmatter comments
+            if let Some(ref frontmatter) = root.frontmatter {
+                merged.extend_from_slice(&frontmatter.program.comments);
+            }
+
+            // 2. <script> block comments — walk the body looking for AstroScript nodes.
+            collect_astro_script_comments(&root.body, &mut merged);
+
+            // 3. Body (template) comments — expression containers, JSX attributes, etc.
+            merged.extend_from_slice(&ret.body_comments);
+
+            // Sort by span start so the interval builder sees them in source order.
+            merged.sort_unstable_by_key(|c| c.span.start);
+
+            allocator.alloc(merged)
+        };
+
+        // Build semantic using our new Astro-aware method
+        let semantic_ret = SemanticBuilder::new()
+            .with_cfg(true)
+            .with_check_syntax_error(check_syntax_errors)
+            .build_astro(root, source_text, comments);
+
+        if !semantic_ret.errors.is_empty() {
+            let section_source = JavaScriptSource::new(source_text, source_type);
+            if let Some(sections) = &mut out_sections {
+                sections.push(SectionContent {
+                    source: section_source,
+                    semantic: None,
+                    parser_tokens: None,
+                    astro_section_map: None,
+                    astro_frontmatter_offset: 0,
+                });
+            }
+            return smallvec::smallvec![Err(semantic_ret.errors)];
+        }
+
+        let semantic = semantic_ret.semantic;
+
+        // Build the Astro section map and frontmatter offset for code-action insertion.
+        //
+        // `section_offset` on a `Message` tells the LSP where to insert "disable for this
+        // whole file / section" comments.  Because Astro is processed as a single semantic
+        // unit (unlike Vue/Svelte which split into per-script sections), all messages would
+        // otherwise share `section_offset = 0`, causing every "disable whole file" action to
+        // insert at byte 0 — before the opening `---` fence.
+        //
+        // After linting, `apply_astro_section_offsets` corrects each message's
+        // `section_offset` using this map.
+        let astro_section_map = build_astro_section_map(source_text, &root.body);
+
+        // Find the `\n` that terminates the opening `---` fence.  Passing this offset as
+        // `section_offset` to the LSP helpers causes `get_section_insert_position` to
+        // detect the `\n` and insert after it (i.e. on the first line of frontmatter
+        // content), matching the same pattern used for Vue/Svelte `<script>\n` offsets.
+        let astro_frontmatter_offset: u32 = root
+            .frontmatter
+            .as_ref()
+            .map(|_| {
+                let bytes = source_text.as_bytes();
+                if bytes.starts_with(b"---") {
+                    // Offset 3 is the char right after `---`.  If it's a newline, point
+                    // at it (the LSP helper will skip past it).  If it's `\r\n`, same.
+                    // Otherwise fall back to 3.
+                    3u32
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0);
+
+        // Create module record (may be empty for Astro files without imports)
+        let mut module_record = ModuleRecord::default();
+        module_record.resolved_absolute_path = path.to_path_buf();
+        let module_record = Arc::new(module_record);
+
+        let mut resolved_module_requests: Vec<ResolvedModuleRequest> = vec![];
+
+        // If import plugin is enabled, resolve imports from frontmatter
+        if let Some(resolver) = &self.resolver {
+            let dir = path.parent().unwrap();
+            resolved_module_requests = module_record
+                .requested_modules
+                .keys()
+                .filter_map(|specifier| {
+                    let resolution = resolver.resolve(dir, specifier).ok()?;
+                    Some(ResolvedModuleRequest {
+                        specifier: specifier.clone(),
+                        resolved_requested_path: Arc::<OsStr>::from(resolution.path().as_os_str()),
+                    })
+                })
+                .collect();
+        }
+
+        let section_source = JavaScriptSource::new(source_text, source_type);
+        if let Some(sections) = &mut out_sections {
+            sections.push(SectionContent {
+                source: section_source,
+                semantic: Some(semantic),
+                parser_tokens: None,
+                astro_section_map: Some(astro_section_map),
+                astro_frontmatter_offset,
+            });
+        }
+
+        smallvec::smallvec![Ok(ResolvedModuleRecord { module_record, resolved_module_requests })]
+    }
+}
+
+/// Recursively collect comments from all `AstroScript` nodes in an Astro JSX body.
+///
+/// Astro `<script>` blocks are represented in the AST as `JSXElement` nodes whose
+/// children contain a single `JSXChild::AstroScript`.  The script's `Program` holds
+/// its own `comments` vec with byte spans that are already absolute (relative to the
+/// start of the full `.astro` source text), so they can be merged directly with
+/// frontmatter comments and fed to `DisableDirectivesBuilder`.
+#[cfg(feature = "astro")]
+fn collect_astro_script_comments<'a>(
+    children: &oxc_allocator::Vec<'a, oxc_ast::ast::JSXChild<'a>>,
+    out: &mut oxc_allocator::Vec<'a, oxc_ast::ast::Comment>,
+) {
+    use oxc_ast::ast::JSXChild;
+
+    for child in children {
+        match child {
+            JSXChild::AstroScript(script) => {
+                out.extend_from_slice(&script.program.comments);
+            }
+            JSXChild::Element(el) => {
+                // <script> blocks are wrapped as JSXElement children containing AstroScript
+                collect_astro_script_comments(&el.children, out);
+            }
+            JSXChild::Fragment(frag) => {
+                collect_astro_script_comments(&frag.children, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Build an [`AstroSectionMap`] by walking the JSX body of a parsed Astro file.
+///
+/// Each entry is `(content_start, content_end, insert_offset)` where:
+/// - `content_start..content_end` is the byte range of the `<script>` block's content
+///   (excluding the `<script>` and `</script>` tags) in the full `.astro` source text.
+/// - `insert_offset` is the byte offset of the `\n` that terminates the `<script>`
+///   opening tag, passed to `get_section_insert_position` which inserts after it
+///   (i.e. on the first line of the block's content), matching Vue/Svelte behaviour.
+///
+/// **Important**: we use `script.span` (the whole-element absolute span) rather than
+/// `script.program.span` because `parse_astro_scripts` replaces placeholder programs
+/// with re-parsed versions whose `program.span` starts at 0, not at the original
+/// content offset.  `script.span` is set by the JSX parser and is always absolute.
+///
+/// Entries are returned sorted by `content_start`.
+#[cfg(feature = "astro")]
+fn build_astro_section_map(
+    source_text: &str,
+    children: &oxc_allocator::Vec<'_, oxc_ast::ast::JSXChild<'_>>,
+) -> AstroSectionMap {
+    let mut map = AstroSectionMap::new();
+    collect_script_spans(source_text, children, &mut map);
+    map.sort_unstable_by_key(|&(start, _, _)| start);
+    map
+}
+
+/// Recursive helper for [`build_astro_section_map`].
+#[cfg(feature = "astro")]
+fn collect_script_spans(
+    source_text: &str,
+    children: &oxc_allocator::Vec<'_, oxc_ast::ast::JSXChild<'_>>,
+    out: &mut AstroSectionMap,
+) {
+    use oxc_ast::ast::JSXChild;
+
+    for child in children {
+        match child {
+            JSXChild::AstroScript(script) => {
+                // `script.span` covers the entire `<script>...</script>` element with
+                // absolute byte offsets into the full `.astro` source.
+                //
+                // We find the first `>` inside `script.span` — that's the end of the
+                // opening tag.  The byte right after it is either `\n` (line-break after
+                // `<script>`) or the first character of content.  We set `insert_offset`
+                // to that `>` position so `get_section_insert_position` detects the `\n`
+                // and inserts the disable comment after it (matching Vue/Svelte logic).
+                let tag_start = script.span.start as usize;
+                let tag_end = script.span.end as usize;
+                let bytes = source_text.as_bytes();
+
+                // Find the `>` that closes the opening tag.
+                let Some(gt_offset) = bytes[tag_start..tag_end].iter().position(|&b| b == b'>')
+                else {
+                    continue;
+                };
+
+                // Content starts right after `>`.
+                let content_start = (tag_start + gt_offset) as u32 + 1;
+
+                // Content ends at the start of `</script`.
+                let closing = b"</script";
+                let content_end = if let Some(rest) =
+                    source_text.as_bytes().get(content_start as usize..tag_end)
+                {
+                    if let Some(close_offset) =
+                        rest.windows(closing.len()).position(|w| w == closing)
+                    {
+                        content_start + close_offset as u32
+                    } else {
+                        // Malformed — treat the whole remaining span as content
+                        tag_end as u32
+                    }
+                } else {
+                    tag_end as u32
+                };
+
+                // `insert_offset` is passed as `section_offset` to the LSP code-action
+                // helpers.  When `section_offset == target_offset` and
+                // `bytes[section_offset] == '\n'`, `get_section_insert_position` returns
+                // `("", section_offset + 1)` — i.e. it inserts right after the newline
+                // at the top of the script content.  Setting `insert_offset = content_start`
+                // (the byte right after `>`, which is `\n`) achieves this.
+                let insert_offset = content_start;
+
+                out.push((content_start, content_end, insert_offset));
+            }
+            JSXChild::Element(el) => {
+                collect_script_spans(source_text, &el.children, out);
+            }
+            JSXChild::Fragment(frag) => {
+                collect_script_spans(source_text, &frag.children, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Given an [`AstroSectionMap`] and a diagnostic byte offset, return the correct
+/// `section_offset` to use for code-action insertion:
+/// - If the offset falls inside a `<script>` block, return that block's `insert_offset`.
+/// - Otherwise return `None` (caller uses the default frontmatter `section_offset`).
+#[cfg(feature = "astro")]
+fn astro_section_offset_for(map: &AstroSectionMap, span_start: u32) -> Option<u32> {
+    // Binary search for the last entry whose content_start <= span_start
+    let idx = map.partition_point(|&(start, _, _)| start <= span_start);
+    if idx == 0 {
+        return None;
+    }
+    let (content_start, content_end, insert_offset) = map[idx - 1];
+    if span_start >= content_start && span_start < content_end { Some(insert_offset) } else { None }
+}
+
+/// Post-correct `section_offset` on each Astro diagnostic message.
+///
+/// Since the Astro linting pass uses a single [`ContextSubHost`] (unlike Vue/Svelte which
+/// have one per script block), all messages start with `section_offset = 0`.  This function:
+///
+/// - Skips file-level diagnostics (span `(0,0)`) — leaving their `section_offset = 0` so
+///   the existing guard in `error_with_position.rs` correctly suppresses code actions.
+/// - Sets `section_offset` to the script block's `insert_offset` for diagnostics whose
+///   `span.start` falls inside a `<script>` block.
+/// - Sets `section_offset` to `frontmatter_offset` for all other diagnostics (frontmatter,
+///   template body), so that "disable for this whole file" inserts inside the frontmatter
+///   section rather than before the opening `---` fence.
+#[cfg(feature = "astro")]
+fn apply_astro_section_offsets(
+    messages: &mut Vec<Message>,
+    map: &AstroSectionMap,
+    frontmatter_offset: u32,
+) {
+    for msg in messages {
+        // File-level diagnostics (e.g. `filename-case`) have a zero-length span at offset 0.
+        // Assigning a non-zero `section_offset` to them would cause a panic in the LSP code
+        // action generation (which slices `bytes[section_offset..error_offset]`), and the
+        // existing guard that suppresses ignore-fixes for such diagnostics relies on
+        // `error_offset == section_offset`.  Leave them unchanged.
+        if msg.span.start == 0 && msg.span.end == 0 {
+            continue;
+        }
+        msg.section_offset =
+            astro_section_offset_for(map, msg.span.start).unwrap_or(frontmatter_offset);
     }
 }

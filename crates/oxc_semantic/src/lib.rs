@@ -42,8 +42,13 @@ mod scoping;
 mod stats;
 mod unresolved_stack;
 
+#[cfg(feature = "astro")]
+mod astro;
+
 #[cfg(feature = "linter")]
 pub use ast_types_bitset::AstTypesBitset;
+#[cfg(feature = "astro")]
+pub use astro::SemanticBuilderAstroExt;
 pub use builder::{SemanticBuilder, SemanticBuilderReturn};
 pub use is_global_reference::IsGlobalReference;
 #[cfg(feature = "jsdoc")]

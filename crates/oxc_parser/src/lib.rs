@@ -72,6 +72,8 @@ mod modifiers;
 mod module_record;
 mod state;
 
+#[cfg(feature = "astro")]
+mod astro;
 mod js;
 mod jsx;
 mod ts;
@@ -187,6 +189,10 @@ pub struct ParserReturn<'a> {
     /// Whether the file is [flow](https://flow.org).
     pub is_flow_language: bool,
 }
+
+// Re-export AstroParserReturn when astro feature is enabled
+#[cfg(feature = "astro")]
+pub use astro::AstroParserReturn;
 
 /// Parse options
 ///
@@ -320,6 +326,13 @@ mod parser_parse {
         pub fn new_for_tests_and_benchmarks() -> Self {
             Self(())
         }
+
+        /// Create a `UniquePromise` for Astro script parsing.
+        /// This is used internally by the Astro module for parsing script content.
+        #[cfg(feature = "astro")]
+        pub(crate) fn new_for_astro() -> Self {
+            Self(())
+        }
     }
 
     impl<'a, C: ParserConfig> Parser<'a, C> {
@@ -372,6 +385,38 @@ mod parser_parse {
                 unique,
             );
             parser.parse_expression()
+        }
+
+        /// Parse an [Astro](https://astro.build) file.
+        ///
+        /// Astro files have a frontmatter section (TypeScript) delimited by `---` and
+        /// an HTML body that can contain JSX expressions.
+        ///
+        /// # Example
+        ///
+        /// ```rust
+        /// use oxc_allocator::Allocator;
+        /// use oxc_parser::Parser;
+        /// use oxc_span::SourceType;
+        ///
+        /// let src = r#"---
+        /// const name = "World";
+        /// ---
+        /// <h1>Hello {name}!</h1>
+        /// "#;
+        /// let allocator = Allocator::new();
+        /// let source_type = SourceType::astro();
+        ///
+        /// let result = Parser::new(&allocator, src, source_type).parse_astro();
+        /// ```
+        #[cfg(feature = "astro")]
+        pub fn parse_astro(self) -> AstroParserReturn<'a> {
+            crate::astro::parse_astro(
+                self.allocator,
+                self.source_text,
+                self.source_type,
+                self.options,
+            )
         }
     }
 }
@@ -556,6 +601,64 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             return Err(errors);
         }
         Ok(expr)
+    }
+
+    /// Parse only the body (JSX) part of an Astro file.
+    ///
+    /// If `body_start` is provided, the lexer will start parsing from that position.
+    /// Otherwise, it will start from the beginning of the source.
+    ///
+    /// Returns the body children, errors, whether the parser panicked, and JS-style comments
+    /// encountered during body parsing (e.g. inside expression containers or JSX attributes).
+    /// These comments have absolute byte-offset spans into the original source text and must be
+    /// merged with frontmatter and `<script>`-block comments before being fed to
+    /// `DisableDirectivesBuilder`, so that `eslint-disable` directives work everywhere in the
+    /// template.
+    #[cfg(feature = "astro")]
+    pub fn parse_astro_body_only(
+        mut self,
+        body_start: Option<usize>,
+    ) -> (
+        oxc_allocator::Vec<'a, oxc_ast::ast::JSXChild<'a>>,
+        Vec<OxcDiagnostic>,
+        bool,
+        Vec<oxc_ast::ast::Comment>,
+    ) {
+        // If body_start is provided, skip to that position
+        if let Some(start) = body_start {
+            #[expect(clippy::cast_possible_truncation)]
+            self.lexer.set_position_for_astro(start as u32);
+        }
+
+        // Initialize by reading the first token as a JSX child
+        // This ensures we're in JSX child mode from the start, which correctly
+        // handles HTML entities like &#8458; that would otherwise be misinterpreted
+        // as private identifiers in regular JS mode.
+        self.token = self.lexer.next_jsx_child();
+
+        // Parse the body
+        let body = self.parse_astro_body();
+        let mut panicked = false;
+
+        if let Some(fatal_error) = self.fatal_error.take() {
+            panicked = true;
+            self.errors.truncate(fatal_error.errors_len);
+            self.error(fatal_error.error);
+        }
+
+        self.check_unfinished_errors();
+
+        let mut errors: Vec<OxcDiagnostic> =
+            Vec::with_capacity(self.lexer.errors.len() + self.errors.len());
+        errors.extend(self.lexer.errors);
+        errors.extend(self.errors);
+
+        // Collect JS-style comments seen by the body parser (e.g. inside `{ }` expression
+        // containers or JSX attributes).  These carry absolute byte offsets into the original
+        // source, so they can be merged directly with frontmatter / script-block comments.
+        let body_comments = self.lexer.trivia_builder.comments;
+
+        (body, errors, panicked, body_comments)
     }
 
     #[expect(clippy::cast_possible_truncation)]
