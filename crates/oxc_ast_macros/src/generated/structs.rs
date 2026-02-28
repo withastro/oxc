@@ -153,7 +153,7 @@ pub static STRUCTS: phf::Map<&'static str, StructDetails> = ::phf::Map {
         ("TSImportEqualsDeclaration", StructDetails { field_order: Some(&[3, 0, 1, 2, 4]) }),
         ("NullLiteral", StructDetails { field_order: Some(&[1, 0]) }),
         ("TSTypeReference", StructDetails { field_order: Some(&[3, 0, 1, 2]) }),
-        ("RawTransferMetadata", StructDetails { field_order: Some(&[1, 2, 3, 4, 0]) }),
+        ("RawTransferMetadata", StructDetails { field_order: Some(&[0, 3, 4, 5, 1, 2]) }),
         ("BindingProperty", StructDetails { field_order: Some(&[3, 0, 1, 2, 4, 5]) }),
         ("TSIndexSignature", StructDetails { field_order: Some(&[3, 0, 1, 2, 4, 5]) }),
         (
@@ -314,7 +314,7 @@ pub static STRUCTS: phf::Map<&'static str, StructDetails> = ::phf::Map {
         ("AstroDoctype", StructDetails { field_order: None }),
         ("TSTypeParameterDeclaration", StructDetails { field_order: Some(&[2, 0, 1]) }),
         ("TSThisType", StructDetails { field_order: Some(&[1, 0]) }),
-        ("RawTransferMetadata2", StructDetails { field_order: Some(&[1, 2, 3, 4, 0]) }),
+        ("RawTransferMetadata2", StructDetails { field_order: Some(&[0, 3, 4, 5, 1, 2]) }),
         ("RegExp", StructDetails { field_order: None }),
         (
             "Function",

@@ -19,9 +19,9 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use self_cell::self_cell;
 use smallvec::SmallVec;
 
-use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool};
+use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool, Vec as ArenaVec};
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, Error, OxcDiagnostic};
-use oxc_parser::{ParseOptions, Parser};
+use oxc_parser::{ParseOptions, Parser, Token, config::RuntimeParserConfig};
 use oxc_resolver::Resolver;
 #[cfg(feature = "astro")]
 use oxc_semantic::SemanticBuilderAstroExt;
@@ -129,6 +129,8 @@ struct SectionContent<'a> {
     /// None if section parsing failed. The corresponding item with the same index in
     /// `ProcessedModule.section_module_records` would be `Err(Vec<OxcDiagnostic>)`.
     semantic: Option<Semantic<'a>>,
+    /// None if section parsing failed, or token collection was not requested.
+    parser_tokens: Option<ArenaVec<'a, Token>>,
 }
 
 /// A module with its source text and semantic, ready to be linted.
@@ -621,6 +623,7 @@ impl Runtime {
                                         Arc::clone(&module_record),
                                         section.source.start,
                                         section.source.framework_options,
+                                        section.parser_tokens,
                                     ))
                                 }
                                 Err(messages) => {
@@ -740,6 +743,7 @@ impl Runtime {
                                         Arc::clone(&module_record),
                                         section.source.start,
                                         section.source.framework_options,
+                                        section.parser_tokens,
                                     ))
                                 }
                                 Err(diagnostics) => {
@@ -813,7 +817,8 @@ impl Runtime {
                                     section.semantic.unwrap(),
                                     Arc::clone(&module_record),
                                     section.source.start,
-                                    section.source.framework_options
+                                    section.source.framework_options,
+                                    section.parser_tokens,
                                 )),
                                 Err(errors) => {
                                     if !errors.is_empty() {
@@ -987,12 +992,13 @@ impl Runtime {
                 section_source.source_type,
                 check_syntax_errors,
             ) {
-                Ok((record, semantic)) => {
+                Ok((record, semantic, parser_tokens)) => {
                     section_module_records.push(Ok(record));
                     if let Some(sections) = &mut out_sections {
                         sections.push(SectionContent {
                             source: section_source,
                             semantic: Some(semantic),
+                            parser_tokens,
                         });
                     }
                 }
@@ -1013,7 +1019,11 @@ impl Runtime {
 
                     section_module_records.push(Err(err));
                     if let Some(sections) = &mut out_sections {
-                        sections.push(SectionContent { source: section_source, semantic: None });
+                        sections.push(SectionContent {
+                            source: section_source,
+                            semantic: None,
+                            parser_tokens: None,
+                        });
                     }
                 }
             }
@@ -1021,6 +1031,7 @@ impl Runtime {
         section_module_records
     }
 
+    #[expect(clippy::type_complexity)]
     fn process_source_section<'a>(
         &self,
         path: &Path,
@@ -1028,13 +1039,16 @@ impl Runtime {
         source_text: &'a str,
         source_type: SourceType,
         check_syntax_errors: bool,
-    ) -> Result<(ResolvedModuleRecord, Semantic<'a>), Vec<OxcDiagnostic>> {
+    ) -> Result<(ResolvedModuleRecord, Semantic<'a>, Option<ArenaVec<'a, Token>>), Vec<OxcDiagnostic>>
+    {
+        let collect_tokens = self.linter.has_external_linter();
         let ret = Parser::new(allocator, source_text, source_type)
             .with_options(ParseOptions {
                 parse_regular_expression: true,
                 allow_return_outside_function: true,
                 ..ParseOptions::default()
             })
+            .with_config(RuntimeParserConfig::new(collect_tokens))
             .parse();
 
         if !ret.errors.is_empty() {
@@ -1073,7 +1087,12 @@ impl Runtime {
                 })
                 .collect();
         }
-        Ok((ResolvedModuleRecord { module_record, resolved_module_requests }, semantic))
+        let parser_tokens = collect_tokens.then_some(ret.tokens);
+        Ok((
+            ResolvedModuleRecord { module_record, resolved_module_requests },
+            semantic,
+            parser_tokens,
+        ))
     }
 
     /// Process an Astro file using the full Astro parser.
