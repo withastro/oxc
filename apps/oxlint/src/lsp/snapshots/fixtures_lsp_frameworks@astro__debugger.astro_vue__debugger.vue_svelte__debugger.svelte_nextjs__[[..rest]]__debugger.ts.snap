@@ -94,11 +94,11 @@ Is Preferred: Some(false)
 TextEdit: TextEdit {
     range: Range {
         start: Position {
-            line: 0,
+            line: 1,
             character: 0,
         },
         end: Position {
-            line: 0,
+            line: 1,
             character: 0,
         },
     },
@@ -148,11 +148,11 @@ Is Preferred: Some(false)
 TextEdit: TextEdit {
     range: Range {
         start: Position {
-            line: 0,
+            line: 10,
             character: 0,
         },
         end: Position {
-            line: 0,
+            line: 10,
             character: 0,
         },
     },
@@ -202,11 +202,11 @@ Is Preferred: Some(false)
 TextEdit: TextEdit {
     range: Range {
         start: Position {
-            line: 0,
+            line: 14,
             character: 0,
         },
         end: Position {
-            line: 0,
+            line: 14,
             character: 0,
         },
     },
@@ -256,11 +256,11 @@ Is Preferred: Some(false)
 TextEdit: TextEdit {
     range: Range {
         start: Position {
-            line: 0,
+            line: 18,
             character: 0,
         },
         end: Position {
-            line: 0,
+            line: 18,
             character: 0,
         },
     },
