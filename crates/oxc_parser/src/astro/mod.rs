@@ -1721,12 +1721,13 @@ return;
     }
 
     #[test]
-    fn test_expression_container_whitespace_spans() {
+     fn test_expression_container_whitespace_spans() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
         // Expression container with whitespace around the inner element.
-        // Leading whitespace is skipped by the JS tokeniser (insignificant).
-        // Trailing whitespace (`\n` before `}`) is preserved as a JSXText child.
+        // Leading and trailing whitespace-only text nodes are stripped so that
+        // `{\n\t<div>Hello</div>\n}` is treated as `{<div>Hello</div>}`.
+        // This matches Prettier's Astro plugin behaviour.
         let source = "{\n\t<div>Hello</div>\n}";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
 
@@ -1741,28 +1742,12 @@ return;
                 &source[container.span.start as usize..container.span.end as usize];
             assert_eq!(container_text, source, "Container should span entire source");
 
-            // The expression is a fragment [Element(<div>), Text("\n")] because trailing
-            // whitespace before `}` is preserved as a JSXText child.
+            // After stripping surrounding whitespace-only text nodes, the expression
+            // is a bare JSXElement (not a fragment), matching Prettier Astro behaviour.
             assert!(
-                matches!(container.expression, JSXExpression::JSXFragment(_)),
-                "Expression should be a JSXFragment wrapping the element and trailing whitespace"
+                matches!(container.expression, JSXExpression::JSXElement(_)),
+                "Expression should be a bare JSXElement after stripping surrounding whitespace"
             );
-            if let JSXExpression::JSXFragment(ref frag) = container.expression {
-                assert_eq!(frag.children.len(), 2, "Fragment should have element + trailing text");
-                assert!(
-                    matches!(frag.children[0], JSXChild::Element(_)),
-                    "First child should be div element"
-                );
-                if let JSXChild::Text(ref text) = frag.children[1] {
-                    assert_eq!(
-                        text.value.as_str(),
-                        "\n",
-                        "Trailing whitespace should be preserved as JSXText"
-                    );
-                } else {
-                    panic!("Second child should be JSXText for trailing whitespace");
-                }
-            }
         } else {
             panic!("Expected JSXChild::ExpressionContainer");
         }

@@ -4,6 +4,7 @@ mod array_pattern;
 mod arrow_function_expression;
 mod as_or_satisfies_expression;
 mod assignment_pattern_property_list;
+pub mod astro;
 mod binary_like_expression;
 mod binding_property_list;
 mod block_statement;
@@ -83,6 +84,7 @@ use self::{
     array_expression::FormatArrayExpression,
     block_statement::is_empty_block,
     class::format_grouped_parameters_with_return_type_for_method,
+
     object_like::ObjectLike,
     object_pattern_like::ObjectPatternLike,
     return_or_throw_statement::FormatAdjacentArgument,
@@ -94,37 +96,6 @@ pub trait FormatWrite<'ast, T = ()> {
     fn write(&self, f: &mut Formatter<'_, 'ast>);
     fn write_with_options(&self, _options: T, _f: &mut Formatter<'_, 'ast>) {
         unreachable!("Please implement it first.");
-    }
-}
-
-// Astro support is not yet implemented - these are placeholder implementations
-impl<'a> FormatWrite<'a> for AstNode<'a, AstroRoot<'a>> {
-    fn write(&self, _f: &mut Formatter<'_, 'a>) {
-        // TODO: Implement Astro formatting
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, AstroFrontmatter<'a>> {
-    fn write(&self, _f: &mut Formatter<'_, 'a>) {
-        // TODO: Implement Astro formatting
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, AstroScript<'a>> {
-    fn write(&self, _f: &mut Formatter<'_, 'a>) {
-        // TODO: Implement Astro formatting
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, AstroDoctype<'a>> {
-    fn write(&self, _f: &mut Formatter<'_, 'a>) {
-        // TODO: Implement Astro formatting
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, AstroComment<'a>> {
-    fn write(&self, _f: &mut Formatter<'_, 'a>) {
-        // TODO: Implement Astro formatting
     }
 }
 

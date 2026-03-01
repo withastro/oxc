@@ -19,6 +19,7 @@ use crate::{
         prelude::*,
         trivia::{DanglingIndentMode, FormatDanglingComments, FormatTrailingComments},
     },
+    print::astro::astro_spread_is_shorthand,
     utils::tailwindcss::is_tailwind_jsx_attribute,
     write,
 };
@@ -156,25 +157,34 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXExpressionContainer<'a>> {
                 || f.comments().has_comment_in_range(expression_span.end, self.span.end)
         };
 
-        // Expression child
-        if matches!(self.parent(), AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
+        // Expression child (also includes Astro top-level: children of AstroRoot)
+        if matches!(
+            self.parent(),
+            AstNodes::JSXElement(_) | AstNodes::JSXFragment(_) | AstNodes::AstroRoot(_)
+        ) {
             if let JSXExpression::EmptyExpression(_) = self.expression {
                 let comments = f.context().comments().comments_before(self.span.end);
-                let has_line_comment = comments.iter().any(|c| c.is_line());
+                // Use block-indent when any comment requires its own line:
+                // - Line comments (`// ...`) always need a hard line break after.
+                // - In Astro files, multiline block comments (`/* ...\n... */`) also
+                //   get block-indent (Astro-specific Prettier behavior).
+                // - In regular JSX, multiline block comments stay inline.
+                // Single-line block comments (`/* inline */`) always stay inline:
+                // `{/* Hello */}`.
+                let is_astro = f.context().source_type().is_astro();
+                let needs_block_indent = comments.iter().any(|c| {
+                    c.is_line() || (is_astro && c.is_multiline_block())
+                });
 
                 write!(f, ["{"]);
 
-                if has_line_comment {
+                if needs_block_indent {
                     write!(
                         f,
-                        [
-                            FormatDanglingComments::Comments {
-                                comments,
-                                indent: DanglingIndentMode::Block
-                            },
-                            format_dangling_comments(self.span).with_block_indent(),
-                            hard_line_break()
-                        ]
+                        [FormatDanglingComments::Comments {
+                            comments,
+                            indent: DanglingIndentMode::Block
+                        },]
                     );
                 } else {
                     write!(
@@ -195,7 +205,19 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXExpressionContainer<'a>> {
                         | JSXExpression::BinaryExpression(_)
                 );
 
+                // In Astro files, JSX expression containers that are children of
+                // an element/fragment always use `soft_block_indent`. This means
+                // short expressions like `{hello}` stay on one line (soft breaks
+                // collapse), while complex expressions like `{numbers.map(…)}`
+                // that contain internal hard breaks expand to the block form:
+                //   `{\n  numbers.map(…)\n}`
+                //
+                // Standard JSX uses `should_inline` to decide whether to wrap —
+                // returning `true` for CallExpression, ArrowFunctionExpression, etc.
+                // In Astro those "inline" expressions still need the soft_block_indent
+                // so that the `{` and `}` move to their own lines when the content breaks.
                 let should_inline = !has_comment(f)
+                    && !f.context().source_type().is_astro()
                     && (is_conditional_or_binary || should_inline_jsx_expression(self));
 
                 let format_expression = format_with(|f| {
@@ -322,6 +344,27 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, JSXAttributeItem<'a>>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, JSXAttribute<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
+        // In Astro, `{prop}` shorthand attributes are parsed as a regular
+        // `JSXAttribute` (name=`prop`, value=`{prop}`) but the span of the
+        // attribute itself starts *inside* the braces (i.e. at the identifier,
+        // not at `{`).  Detect this by peeking at the character just before the
+        // span start; if it is `{`, the attribute was written as a shorthand and
+        // we must re-emit it as `{name}` (without the `name=` prefix).
+        if f.context().source_type().is_astro()
+            && self.span.start > 0
+            && f.source_text()
+                .slice_range(self.span.start - 1, self.span.start)
+                == "{"
+        {
+            // Re-emit as Astro shorthand: `{name}` (the closing `}` is part of
+            // the value ExpressionContainer, so we emit `{name}` directly and
+            // skip the normal `name={value}` form).
+            if let JSXAttributeName::Identifier(ident) = &self.name {
+                write!(f, ["{", text(ident.name.as_str()), "}"]);
+                return;
+            }
+        }
+
         write!(f, self.name());
 
         if let Some(value) = &self.value() {
@@ -352,8 +395,16 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXSpreadAttribute<'a>> {
         let comments = f.context().comments();
         let has_comment = comments.has_comment_before(self.argument.span().start)
             || comments.has_comment_in_range(self.argument.span().end, self.span.end);
+        // In Astro, `{expr}` (without `...`) is a shorthand attribute; preserve
+        // the no-dots form. For regular JSX and real spreads always print `...`.
+        let source = f.source_text().slice_range(self.span.start, self.span.end);
+        let is_astro_shorthand =
+            f.context().source_type().is_astro() && astro_spread_is_shorthand(self.span, source);
         let format_inner = format_with(|f| {
-            write!(f, [format_leading_comments(self.argument.span()), "..."]);
+            write!(f, format_leading_comments(self.argument.span()));
+            if !is_astro_shorthand {
+                write!(f, "...");
+            }
             self.argument().fmt(f);
         });
 

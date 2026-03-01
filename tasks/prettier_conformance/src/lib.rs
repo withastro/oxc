@@ -1,5 +1,6 @@
 #![expect(clippy::print_stdout)]
 
+pub mod astro;
 mod ignore_list;
 pub mod options;
 mod spec;

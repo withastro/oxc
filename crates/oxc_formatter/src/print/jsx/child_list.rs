@@ -23,11 +23,25 @@ use std::cell::RefCell;
 #[derive(Debug, Clone, Default)]
 pub struct FormatJsxChildList {
     layout: JsxChildListLayout,
+    /// When `true`, expression-only children are always formatted in multiline
+    /// style (Astro template element behaviour). This should only be set for
+    /// JSX elements that are direct children of the Astro template body, not
+    /// for nested elements inside JS expressions.
+    astro_force_multiline_exprs: bool,
 }
 
 impl FormatJsxChildList {
     pub fn with_options(mut self, options: JsxChildListLayout) -> Self {
         self.layout = options;
+        self
+    }
+
+    /// Enable Astro-specific forced multiline for expression-only children.
+    ///
+    /// Call this only for JSX elements that are part of the Astro template
+    /// body (i.e. whose parent is `AstroRoot`, `JSXElement`, or `JSXFragment`).
+    pub fn with_astro_force_multiline(mut self) -> Self {
+        self.astro_force_multiline_exprs = true;
         self
     }
 
@@ -46,7 +60,17 @@ impl FormatJsxChildList {
             MultilineLayout::NoFill
         };
 
-        let mut force_multiline = layout.is_multiline();
+        // In Astro template elements, Prettier always formats expression-only
+        // children in multiline style — even when they fit on a single line.
+        // This matches prettier-plugin-astro's `group(children, { shouldBreak: true })`
+        // when there is no meaningful text. This flag is only set by `element.rs`
+        // for elements that are part of the Astro template body; nested elements
+        // inside JS expressions use normal rules.
+        let astro_force_multiline = self.astro_force_multiline_exprs
+            && children_meta.has_expression
+            && !children_meta.meaningful_text;
+
+        let mut force_multiline = layout.is_multiline() || astro_force_multiline;
         let mut flat = FlatBuilder::new(force_multiline, f.context().allocator());
         let mut multiline = MultilineBuilder::new(multiline_layout, f.context().allocator());
 
@@ -355,7 +379,6 @@ impl FormatJsxChildList {
         comments: &Comments<'_>,
     ) -> ChildrenMeta {
         let mut meta = ChildrenMeta::default();
-        let mut has_expression = false;
 
         for child in children {
             match child.as_ref() {
@@ -366,8 +389,8 @@ impl FormatJsxChildList {
                     if is_whitespace_jsx_expression(expression, comments) {
                         meta.meaningful_text = true;
                     } else {
-                        meta.multiple_expressions = has_expression;
-                        has_expression = true;
+                        meta.multiple_expressions = meta.has_expression;
+                        meta.has_expression = true;
                     }
                 }
                 JSXChild::Text(text) => {
@@ -446,6 +469,9 @@ struct ChildrenMeta {
 
     /// `true` if children contains more than one [`JSXExpressionContainer`]
     multiple_expressions: bool,
+
+    /// `true` if children contains at least one non-whitespace [`JSXExpressionContainer`]
+    has_expression: bool,
 
     /// `true` if any child contains meaningful a [`JSXText`] with meaningful text.
     meaningful_text: bool,

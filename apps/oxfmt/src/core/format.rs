@@ -60,17 +60,22 @@ impl SourceFormatter {
                     filepath_override,
                     insert_final_newline,
                 },
-            ) => (
-                self.format_by_oxc_formatter(
-                    source_text,
-                    path,
-                    *source_type,
-                    *format_options,
-                    external_options,
-                    filepath_override.as_deref(),
-                ),
-                insert_final_newline,
-            ),
+            ) => {
+                // Route .astro files to the native Astro formatter
+                let result = if source_type.is_astro() {
+                    self.format_by_astro_formatter(source_text, path, *format_options)
+                } else {
+                    self.format_by_oxc_formatter(
+                        source_text,
+                        path,
+                        *source_type,
+                        *format_options,
+                        external_options,
+                        filepath_override.as_deref(),
+                    )
+                };
+                (result, insert_final_newline)
+            }
             (
                 FormatFileStrategy::OxfmtToml { .. },
                 ResolvedOptions::OxfmtToml { toml_options, insert_final_newline },
@@ -192,6 +197,52 @@ impl SourceFormatter {
                 unreachable!("Code removal detected in `{}`:\n{diff}", path.to_string_lossy());
             }
         }
+
+        Ok(code.into_code())
+    }
+
+    /// Format Astro file using the native Rust Astro formatter.
+    #[instrument(level = "debug", name = "oxfmt::format::astro_formatter", skip_all)]
+    fn format_by_astro_formatter(
+        &self,
+        source_text: &str,
+        path: &Path,
+        format_options: FormatOptions,
+    ) -> Result<String, OxcDiagnostic> {
+        let allocator = self.allocator_pool.get();
+
+        let ret = Parser::new(&allocator, source_text, SourceType::astro())
+            .with_options(get_parse_options())
+            .parse_astro();
+
+        if !ret.errors.is_empty() {
+            return Err(ret.errors.into_iter().next().unwrap());
+        }
+
+        // Combine frontmatter comments and body comments into a single sorted slice.
+        // Frontmatter comments come from the parsed Program inside AstroFrontmatter.
+        // Body comments come from JS expressions within the Astro template.
+        let mut all_comments: std::vec::Vec<oxc_ast::Comment> = std::vec::Vec::new();
+        if let Some(frontmatter) = &ret.root.frontmatter {
+            all_comments.extend(frontmatter.program.comments.iter().copied());
+        }
+        all_comments.extend(ret.body_comments.iter().copied());
+        // Sort by span start so comment attribution works correctly.
+        all_comments.sort_unstable_by_key(|c| c.span.start);
+
+        // Allocate the merged comment slice in the arena so it outlives the formatter call.
+        let comments_in_arena = allocator.alloc_slice_copy(&all_comments);
+
+        let base_formatter = Formatter::new(&allocator, format_options);
+        let formatted =
+            base_formatter.format_astro(&ret.root, source_text, comments_in_arena, None);
+
+        let code = formatted.print().map_err(|err| {
+            OxcDiagnostic::error(format!(
+                "Failed to print formatted Astro code: {}\n{err}",
+                path.display()
+            ))
+        })?;
 
         Ok(code.into_code())
     }

@@ -29,6 +29,8 @@ const AST_NODE_WITHOUT_PRINTING_COMMENTS_LIST: &[&str] = &[
     "JSXFragment",
     //
     "TemplateElement",
+    // Astro root node - has Dummy parent like Program, handles its own output in write()
+    "AstroRoot",
 ];
 
 const AST_NODE_WITHOUT_PRINTING_LEADING_COMMENTS_LIST: &[&str] = &["TSUnionType"];

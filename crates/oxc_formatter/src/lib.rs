@@ -97,6 +97,35 @@ impl<'a> Formatter<'a> {
         formatted
     }
 
+    /// Formats an Astro AST root and returns the `Formatted` IR.
+    ///
+    /// Unlike `format()` which requires a `Program`, this method takes an `AstroRoot`
+    /// along with the original source text and a combined comment slice
+    /// (frontmatter comments + body comments).
+    pub fn format_astro(
+        self,
+        root: &'a AstroRoot<'a>,
+        source_text: &'a str,
+        comments: &'a [Comment],
+        external_callbacks: Option<ExternalCallbacks>,
+    ) -> Formatted<'a> {
+        let root_node = AstNode::new(root, AstNodes::Dummy(), self.allocator);
+
+        let context = FormatContext::new(
+            source_text,
+            SourceType::astro(),
+            comments,
+            self.allocator,
+            self.options,
+            external_callbacks,
+        );
+
+        formatter::format(
+            context,
+            formatter::Arguments::new(&[formatter::Argument::new(&root_node)]),
+        )
+    }
+
     /// Formats an arbitrary value that implements `Format` and returns the `Formatted` IR.
     ///
     /// Unlike `format()` which requires a full `Program`,
@@ -125,7 +154,6 @@ impl<'a> Formatter<'a> {
         formatter::format(context, formatter::Arguments::new(&[formatter::Argument::new(node)]))
     }
 }
-
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum JsLabels {
     MemberChain,
