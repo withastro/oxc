@@ -7,7 +7,7 @@ use oxc_syntax::identifier::ZWNBSP;
 
 use crate::{
     Buffer, Format,
-    ast_nodes::AstNode,
+    ast_nodes::{AstNode, AstNodes},
     formatter::{prelude::*, trivia::FormatTrailingComments},
     print::semicolon::OptionalSemicolon,
     utils::string::{FormatLiteralStringToken, StringLiteralParentKind},
@@ -19,10 +19,18 @@ use super::FormatWrite;
 impl<'a> FormatWrite<'a> for AstNode<'a, Program<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
         let format_trailing_comments = format_with(|f| {
-            write!(
-                f,
-                FormatTrailingComments::Comments(f.context().comments().unprinted_comments())
-            );
+            // When this program is the Astro frontmatter, only print trailing
+            // comments that belong to the frontmatter section (i.e., end before
+            // the frontmatter program's span end). Template-body comments (e.g.
+            // `{/* JSX Comment */}`) are merged into the same comment pool but
+            // have positions after the frontmatter ends; they must not be
+            // attributed to the last frontmatter statement.
+            let comments = if matches!(self.parent(), AstNodes::AstroFrontmatter(_)) {
+                f.context().comments().comments_before(self.span.end)
+            } else {
+                f.context().comments().unprinted_comments()
+            };
+            write!(f, FormatTrailingComments::Comments(comments));
         });
 
         write!(

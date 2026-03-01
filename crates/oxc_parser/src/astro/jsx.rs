@@ -423,7 +423,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                         attributes.push(JSXAttributeItem::Attribute(attr));
                         continue;
                     }
-                    JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
+                    // `{...spread}` is a standard JSX spread attribute
+                    let checkpoint = self.checkpoint();
+                    self.bump_any(); // peek past `{`
+                    let is_spread = self.at(Kind::Dot3);
+                    self.rewind(checkpoint);
+                    if is_spread {
+                        JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
+                    } else {
+                        // `{complex?.expr}` — complex shorthand, keep as spread-like
+                        JSXAttributeItem::SpreadAttribute(
+                            self.parse_astro_complex_shorthand_spread(),
+                        )
+                    }
                 }
                 // Quotes can appear in Astro attribute names
                 Kind::Str | Kind::Undetermined => {
@@ -507,7 +519,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
     // ==================== Astro-specific helpers ====================
 
-    /// Try to parse Astro shorthand attribute `{prop}` -> `prop={prop}`
+    /// Try to parse Astro shorthand attribute `{prop}` -> `prop={prop}`.
+    ///
+    /// Handles two cases:
+    /// 1. Simple identifier: `{prop}` → `prop={prop}` (standard Astro shorthand)
+    /// 2. Complex expression: `{object?.something}` → kept as `{object?.something}`
+    ///    (emitted as a `JSXSpreadAttribute` without `...` for maximum compatibility)
     fn try_parse_astro_shorthand_attribute(&mut self) -> Option<Box<'a, JSXAttribute<'a>>> {
         let checkpoint = self.checkpoint();
         self.bump_any(); // bump `{`
@@ -536,6 +553,20 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         self.rewind(checkpoint);
         None
+    }
+
+    /// Parse an Astro `{expr}` attribute that is NOT a simple shorthand (e.g. `{object?.something}`).
+    ///
+    /// In Astro, `{expr}` in attribute position where `expr` is complex (not a plain identifier)
+    /// is kept verbatim as a spread-like attribute. We represent it as a `JSXSpreadAttribute`
+    /// so the formatter can round-trip it faithfully.
+    fn parse_astro_complex_shorthand_spread(&mut self) -> Box<'a, JSXSpreadAttribute<'a>> {
+        let span = self.start_span();
+        self.bump_any(); // bump `{`
+        // Parse the full expression (e.g. `object?.something`)
+        let expr = self.parse_expr();
+        self.expect(Kind::RCurly);
+        self.ast.alloc_jsx_spread_attribute(self.end_span(span), expr)
     }
 
     /// Parse an Astro attribute which can have special characters in the name.
@@ -1113,6 +1144,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
 
         self.expect_jsx_child(Kind::RCurly);
+
+        // Strip leading/trailing whitespace-only text nodes. This normalises
+        // `{\n\t<div/>\n}` to behave like `{<div/>}`, matching Prettier's Astro
+        // plugin behaviour where whitespace around JSX inside `{...}` is invisible.
+        let is_ws_text = |c: &JSXChild<'_>| {
+            matches!(c, JSXChild::Text(t) if t.value.as_str().chars().all(|ch| ch.is_ascii_whitespace()))
+        };
+        while children.first().is_some_and(|c| is_ws_text(c)) {
+            children.remove(0);
+        }
+        while children.last().is_some_and(|c| is_ws_text(c)) {
+            children.pop();
+        }
 
         if children.len() == 1 {
             match children.pop().unwrap() {

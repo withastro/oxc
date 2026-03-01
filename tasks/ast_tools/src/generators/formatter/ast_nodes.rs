@@ -79,8 +79,13 @@ impl Generator for FormatterAstNodesGenerator {
             }
         });
 
-        let dummy_variant = quote! {
-            Self::Dummy() => panic!("Should never be called on a dummy node"),
+        let dummy_span_variant = quote! {
+            Self::Dummy() => Span::default(),
+        };
+
+        let dummy_parent_variant = quote! {
+            // A Dummy node is the sentinel root; returning self avoids unbounded recursion.
+            Self::Dummy() => self,
         };
 
         let span_match_arms = ast_nodes_names.iter().map(|(name, _)| {
@@ -141,7 +146,7 @@ impl Generator for FormatterAstNodesGenerator {
                 #[inline]
                 pub fn span(&self) -> Span {
                     match self {
-                        #dummy_variant
+                        #dummy_span_variant
                         #(#span_match_arms)*
                     }
                 }
@@ -149,7 +154,7 @@ impl Generator for FormatterAstNodesGenerator {
                 #[inline]
                 pub fn parent(&self) -> &Self {
                     match self {
-                        #dummy_variant
+                        #dummy_parent_variant
                         #(#parent_match_arms)*
                     }
                 }

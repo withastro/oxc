@@ -5713,13 +5713,13 @@ impl<'a> Format<'a> for AstNode<'a, JSDocUnknownType> {
 impl<'a> Format<'a> for AstNode<'a, AstroRoot<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) {
         let is_suppressed = f.comments().is_suppressed(self.span().start);
-        self.format_leading_comments(f);
         if is_suppressed {
+            self.format_leading_comments(f);
             FormatSuppressedNode(self.span()).fmt(f);
+            self.format_trailing_comments(f);
         } else {
             self.write(f);
         }
-        self.format_trailing_comments(f);
     }
 }
 

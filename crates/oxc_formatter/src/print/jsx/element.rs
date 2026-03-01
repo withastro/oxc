@@ -1,5 +1,7 @@
 use oxc_allocator::Vec;
-use oxc_ast::ast::{JSXChild, JSXElement, JSXExpression, JSXExpressionContainer, JSXFragment};
+use oxc_ast::ast::{
+    JSXAttributeItem, JSXChild, JSXElement, JSXExpression, JSXExpressionContainer, JSXFragment,
+};
 use oxc_span::{GetSpan, Span};
 
 use crate::{
@@ -7,7 +9,13 @@ use crate::{
     best_fitting, format_args,
     formatter::{Formatter, prelude::*, trivia::FormatTrailingComments},
     parentheses::NeedsParentheses,
-    print::jsx::{FormatChildrenResult, FormatOpeningElement},
+    print::{
+        astro::{
+            astro_is_whitespace_only_text, astro_should_self_close, is_astro_top_level_parent,
+            is_dummy_ancestor,
+        },
+        jsx::{FormatChildrenResult, FormatOpeningElement},
+    },
     utils::{
         jsx::{WrapState, is_meaningful_jsx_text},
         suppressed::FormatSuppressedNode,
@@ -41,7 +49,20 @@ impl<'a> AnyJsxTagWithChildren<'a, '_> {
 
     fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) {
         let trailing_comments = if let AstNodes::ArrowFunctionExpression(arrow) =
-            self.parent().parent().parent()
+            // Guard: only walk 3 levels up when none of those ancestors is the sentinel Dummy
+            // node. Top-level JSX in an Astro body has AstroRoot as grandparent and Dummy as
+            // great-grandparent; the triple-parent chain must not be attempted there.
+            // See `print::astro::is_dummy_ancestor` for details.
+            {
+                let p1 = self.parent();
+                let p2 = p1.parent();
+                let p3 = p2.parent();
+                if is_dummy_ancestor(p1, p2, p3) {
+                    &AstNodes::Dummy()
+                } else {
+                    p3
+                }
+            }
             && arrow.expression
         {
             f.context().comments().comments_before(arrow.span.end)
@@ -85,6 +106,8 @@ impl<'a> AnyJsxTagWithChildren<'a, '_> {
             | AstNodes::JSXAttribute(_)
             | AstNodes::JSXExpressionContainer(_)
             | AstNodes::ConditionalExpression(_) => WrapState::NoWrap,
+            // Top-level JSX in an Astro body is a direct child of AstroRoot; no wrapping needed.
+            _ if is_astro_top_level_parent(parent) => WrapState::NoWrap,
             AstNodes::StaticMemberExpression(member) => {
                 if member.optional {
                     WrapState::NoWrap
@@ -127,14 +150,41 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a, '_> {
                 return FormatSuppressedNode(self.span()).fmt(f);
             }
 
-            let format_opening = format_with(|f| self.fmt_opening(f));
-            let format_closing = format_with(|f| self.fmt_closing(f));
+            let layout = self.layout(f);
 
-            let layout = self.layout();
+            // In Astro files, elements whose only child was whitespace-only text
+            // (spaces/tabs, no newlines) are rendered as self-closing (`<Tag />`).
+            // Elements that are explicitly empty (<div></div>) or have newline-only
+            // whitespace use different layouts. Regular JSX is not affected.
+            // See `print::astro::astro_should_self_close` for the guard.
+            let effective_self_closing =
+                astro_should_self_close(f) && matches!(layout, ElementLayout::NoChildren);
+
+            let format_opening = format_with(|f| {
+                if effective_self_closing {
+                    self.fmt_opening_self_closing(f);
+                } else {
+                    self.fmt_opening(f);
+                }
+            });
+            let format_closing = format_with(|f| {
+                // If we're rendering as self-closing, skip the closing tag.
+                if !effective_self_closing {
+                    self.fmt_closing(f);
+                }
+            });
 
             match layout {
                 ElementLayout::NoChildren => {
                     write!(f, [format_opening, format_closing]);
+                }
+                ElementLayout::ExplicitEmpty => {
+                    // Explicitly-empty element (`<div></div>`): keep open+close, no children.
+                    write!(f, [format_opening, format_closing]);
+                }
+                ElementLayout::AstroSingleSpace => {
+                    // Newline-only whitespace child in Astro: format as `<elem> </elem>`.
+                    write!(f, [format_opening, token(" "), format_closing]);
                 }
                 ElementLayout::Template(expression) => {
                     write!(f, [format_opening, expression, format_closing]);
@@ -154,10 +204,30 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a, '_> {
                         JsxChildListLayout::BestFitting
                     };
 
+                    // In Astro files, expression-only children of top-level template
+                    // elements are always formatted in multiline style. Prettier's Astro
+                    // plugin uses `group(children, { shouldBreak: true })` for these.
+                    //
+                    // "Top-level" means the element's parent is `AstroRoot` (direct child
+                    // of the template body). Nested elements like `<h1>` inside `<body>`
+                    // use normal JSX rules (inline if they fit on one line).
+                    //
+                    // Example (top-level → force multiline):
+                    //   `<h1>{obj.prop}</h1>` → `<h1>\n  {obj.prop}\n</h1>`
+                    //
+                    // Example (nested → keep inline):
+                    //   `<h1>{title}</h1>` (inside <body>) → `<h1>{title}</h1>`
+                    let is_astro_template_element = f.context().source_type().is_astro()
+                        && matches!(self.parent(), AstNodes::AstroRoot(_));
+
                     let children = self.children();
-                    let format_children = FormatJsxChildList::default()
-                        .with_options(list_layout)
-                        .fmt_children(children, f);
+                    let child_list = FormatJsxChildList::default().with_options(list_layout);
+                    let child_list = if is_astro_template_element {
+                        child_list.with_astro_force_multiline()
+                    } else {
+                        child_list
+                    };
+                    let format_children = child_list.fmt_children(children, f);
 
                     match format_children {
                         FormatChildrenResult::SingleChild(child) => {
@@ -276,6 +346,22 @@ impl<'a, 'b> AnyJsxTagWithChildren<'a, 'b> {
         }
     }
 
+    /// Like `fmt_opening` but forces the tag to be rendered as self-closing (`<Tag />`).
+    /// Used when the element has no meaningful children (NoChildren layout).
+    fn fmt_opening_self_closing(&self, f: &mut Formatter<'_, 'a>) {
+        match self {
+            Self::Element(element) => {
+                let opening_formatter =
+                    FormatOpeningElement::new(element.opening_element(), true);
+                write!(f, opening_formatter);
+            }
+            Self::Fragment(fragment) => {
+                // Fragments always use `<>` / `</>`, can't be self-closing.
+                write!(f, fragment.opening_fragment());
+            }
+        }
+    }
+
     fn fmt_closing(&self, f: &mut Formatter<'_, 'a>) {
         match self {
             Self::Element(element) => {
@@ -308,21 +394,74 @@ impl<'a, 'b> AnyJsxTagWithChildren<'a, 'b> {
         }
     }
 
-    fn layout(&self) -> ElementLayout<'a, 'b> {
+    fn layout(&self, f: &Formatter<'_, 'a>) -> ElementLayout<'a, 'b> {
         let children = self.children();
+        let is_astro = f.context().source_type().is_astro();
 
         match children.len() {
-            0 => ElementLayout::NoChildren,
+            0 => {
+                // Element has no children in the source.
+                // In Astro, we self-close UNLESS the element has spread attributes
+                // (e.g. `<div {...spread}></div>` → keep explicit `<div {...spread}></div>`).
+                // Elements with spread attributes must keep their explicit open+close tags
+                // because the spread might provide children at runtime.
+                //
+                // Without spread: `<h1 set:html={content}></h1>` → `<h1 set:html={content} />`
+                // With spread: `<div {...spread}></div>` → `<div {...spread}></div>`
+                if is_astro {
+                    let has_spread = match self {
+                        Self::Element(element) => element
+                            .opening_element
+                            .attributes
+                            .iter()
+                            .any(|attr| matches!(attr, JSXAttributeItem::SpreadAttribute(_))),
+                        Self::Fragment(_) => false,
+                    };
+                    if has_spread {
+                        ElementLayout::ExplicitEmpty
+                    } else {
+                        ElementLayout::NoChildren
+                    }
+                } else {
+                    ElementLayout::NoChildren
+                }
+            }
             1 => {
                 // Safe because of length check above
                 let child = children.first().unwrap();
 
                 match child.as_ast_nodes() {
                     AstNodes::JSXText(text) => {
-                        if is_meaningful_jsx_text(&text.value) {
-                            ElementLayout::Default
+                        if is_astro {
+                            // In Astro files, elements whose only child is pure whitespace
+                            // are handled differently depending on whether the whitespace
+                            // contains newlines:
+                            //
+                            // - Spaces/tabs only (no newlines): self-close → `<slot />`
+                            //   e.g. `<slot>   </slot>` → `<slot />`
+                            //
+                            // - Newlines only (including whitespace with newlines): keep
+                            //   explicit open+close with a single space between tags
+                            //   e.g. `<custom-element>\n\n\n</custom-element>`
+                            //        → `<custom-element> </custom-element>`
+                            //
+                            // - Contains non-whitespace: normal Default layout
+                            let raw = text.value.as_str();
+                            if raw.bytes().all(|b| matches!(b, b' ' | b'\t')) {
+                                // Space/tab only — self-close
+                                ElementLayout::NoChildren
+                            } else if astro_is_whitespace_only_text(raw) {
+                                // All whitespace but contains newlines → single space
+                                ElementLayout::AstroSingleSpace
+                            } else {
+                                ElementLayout::Default
+                            }
                         } else {
-                            ElementLayout::NoChildren
+                            if is_meaningful_jsx_text(&text.value) {
+                                ElementLayout::Default
+                            } else {
+                                ElementLayout::NoChildren
+                            }
                         }
                     }
                     AstNodes::JSXExpressionContainer(expression) => match &expression.expression {
@@ -342,8 +481,25 @@ impl<'a, 'b> AnyJsxTagWithChildren<'a, 'b> {
 
 #[derive(Debug, Clone)]
 pub enum ElementLayout<'a, 'b> {
-    /// Empty Tag with no children or contains no meaningful text.
+    /// Whitespace-only text child (spaces/tabs, no newlines) ��� self-closes in Astro.
+    /// Also used in regular JSX for elements with no meaningful text content.
+    ///
+    /// In Astro: `<slot>   </slot>` → `<slot />`
     NoChildren,
+
+    /// Element has zero children in the source (`<div></div>`).
+    ///
+    /// In Astro, keep the explicit open+close tags (do not auto-self-close).
+    /// In regular JSX this is treated the same as `NoChildren`.
+    ExplicitEmpty,
+
+    /// Astro-only: the element's only child was newline-only whitespace.
+    ///
+    /// Prettier's Astro plugin formats these as `<elem> </elem>` — explicit
+    /// open+close with a single space between tags.
+    ///
+    /// Example: `<custom-element>\n\n\n</custom-element>` → `<custom-element> </custom-element>`
+    AstroSingleSpace,
 
     /// Prefer breaking the template if it is the only child of the element
     /// ```javascript

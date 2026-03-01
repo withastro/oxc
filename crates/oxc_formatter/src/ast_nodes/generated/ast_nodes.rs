@@ -223,7 +223,7 @@ impl AstNodes<'_> {
     #[inline]
     pub fn span(&self) -> Span {
         match self {
-            Self::Dummy() => panic!("Should never be called on a dummy node"),
+            Self::Dummy() => Span::default(),
             Self::Program(n) => n.span(),
             Self::IdentifierName(n) => n.span(),
             Self::IdentifierReference(n) => n.span(),
@@ -422,7 +422,7 @@ impl AstNodes<'_> {
     #[inline]
     pub fn parent(&self) -> &Self {
         match self {
-            Self::Dummy() => panic!("Should never be called on a dummy node"),
+            Self::Dummy() => self,
             Self::Program(n) => n.parent(),
             Self::IdentifierName(n) => n.parent(),
             Self::IdentifierReference(n) => n.parent(),
