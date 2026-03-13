@@ -117,8 +117,16 @@ impl Rule for NoEmptyFile {
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
-        ctx.file_extension()
-            .is_some_and(|ext| !LINT_PARTIAL_LOADER_EXTENSIONS.iter().any(|e| *e == ext))
+        ctx.file_extension().is_some_and(|ext| {
+            // Skip vue/svelte: the linter only sees the extracted <script> block, not the
+            // full file, so the program body appears empty even if the file has template content.
+            // Skip astro: files without a frontmatter get a synthetic empty Program as root,
+            // so the body is always empty even when the file has meaningful HTML/JSX template
+            // content. Files with frontmatter also get a program that only covers the
+            // frontmatter, not the template — a file consisting only of a bare `---\n---` fence
+            // would be incorrectly flagged.
+            ext != "astro" && !LINT_PARTIAL_LOADER_EXTENSIONS.iter().any(|e| *e == ext)
+        })
     }
 }
 

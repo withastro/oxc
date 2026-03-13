@@ -324,22 +324,24 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             self.lexer.set_position_for_astro(content_end as u32);
             self.token = self.lexer.next_jsx_child();
 
-            // Skip the closing tag </script>
-            if self.at(Kind::LAngle) {
-                self.bump_any(); // `<`
-            }
-            if self.at(Kind::Slash) {
-                self.bump_any(); // `/`
-            }
-            // Skip `script`
-            while !self.at(Kind::Eof) && !self.at(Kind::RAngle) {
-                self.bump_any();
-            }
-            if self.at(Kind::RAngle) {
-                self.bump_any(); // `>`
-            }
+            // Find the `>` that closes `</script>` by scanning source text directly,
+            // rather than bumping tokens (which would use the wrong lexer mode).
+            let close_end = {
+                let close_source = &self.source_text[content_end..];
+                // close_source starts with "</script", find the closing ">"
+                if let Some(gt) = close_source.find('>') {
+                    content_end + gt + 1
+                } else {
+                    content_end
+                }
+            };
 
-            let end = self.prev_token_end;
+            #[expect(clippy::cast_possible_truncation)]
+            let end = close_end as u32;
+            // Position the lexer right after `</script>` and re-enter JSX child
+            // mode so the next token is correctly tokenised.
+            self.lexer.set_position_for_astro(end);
+            self.token = self.lexer.next_jsx_child();
             let full_span = oxc_span::Span::new(span, end);
 
             if has_attributes {
@@ -4337,8 +4339,98 @@ export async function getStaticPaths() {
             } else {
                 panic!("expected ExpressionContainer child");
             }
-        } else {
-            panic!("expected Element at root");
-        }
+         } else {
+             panic!("expected Element at root");
+         }
+     }
+
+    #[test]
+    fn parse_astro_html_comment_containing_script_tags() {
+        // HTML comments containing <script> tags should be preserved as a single
+        // comment, not parsed as real script elements.
+        use oxc_ast::ast::JSXChild;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div>before</div>
+<!-- <script async src="https://example.com/gtag.js"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+</script> -->
+<div>after</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let comment_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
+        assert_eq!(comment_count, 1, "Expected 1 HTML comment wrapping the script tags");
+
+        // There should be no AstroScript nodes — the <script> is inside a comment.
+        let script_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroScript(_))).count();
+        assert_eq!(script_count, 0, "Script tags inside comments should not be parsed");
+
+        // There should be exactly 2 real elements (the two <div>s).
+        let element_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+        assert_eq!(element_count, 2, "Expected 2 div elements around the comment");
+    }
+
+    #[test]
+    fn parse_astro_script_followed_by_comment_with_script() {
+        // A real <script is:inline> followed by comments containing <script> tags.
+        // The <script> inside comments must NOT be parsed as a real script element.
+        use oxc_ast::ast::JSXChild;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script is:inline>
+  const root = document.documentElement;
+</script>
+
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<!-- <script async src="https://www.googletagmanager.com/gtag/js?id=G-TEL60V1WM9"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-TEL60V1WM9');
+</script> -->"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        // Parse errors from script content parsing are acceptable — we're checking
+        // the AST structure, not whether the content is valid JS.
+
+        let comment_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
+        let script_count =
+            ret.root.body.iter().filter(|c| matches!(c, JSXChild::Element(el) if {
+                match &el.opening_element.name {
+                    JSXElementName::Identifier(ident) => ident.name.as_str() == "script",
+                    _ => false,
+                }
+            })).count();
+
+        assert_eq!(comment_count, 2,
+            "Expected 2 HTML comments, got {comment_count}. Children: {:?}",
+            ret.root.body.iter().map(|c| match c {
+                JSXChild::AstroComment(_) => "Comment".to_string(),
+                JSXChild::Element(el) => {
+                    let name = match &el.opening_element.name {
+                        JSXElementName::Identifier(ident) => ident.name.to_string(),
+                        _ => "?".to_string(),
+                    };
+                    format!("Element({name})")
+                }
+                JSXChild::Text(t) => format!("Text({:?})", &t.value.as_str()[..t.value.len().min(20)]),
+                JSXChild::AstroScript(_) => "AstroScript".to_string(),
+                _ => "Other".to_string(),
+            }).collect::<Vec<_>>()
+        );
+        // Only the real <script is:inline> should be a script element, not the commented-out ones.
+        assert_eq!(script_count, 1,
+            "Expected 1 real script element, got {script_count}");
     }
 }
