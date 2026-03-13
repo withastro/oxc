@@ -1114,6 +1114,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         self.expect_jsx_child(Kind::RCurly);
 
+        // Strip trailing whitespace-only text node produced by the JSX child
+        // lexer scanning whitespace between the last real child and `}`.
+        if let Some(JSXChild::Text(t)) = children.last() {
+            if t.value.as_str().chars().all(|ch| ch.is_ascii_whitespace()) {
+                children.pop();
+            }
+        }
+
         if children.len() == 1 {
             match children.pop().unwrap() {
                 JSXChild::Element(el) => return JSXExpression::JSXElement(el),

@@ -554,9 +554,8 @@ const name = "World";
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
 
-        // Body should have 4 children: div, text (newline), script, div
-        // (Text nodes for whitespace between elements)
-        assert_eq!(ret.root.body.len(), 4, "Expected 4 children, got {}", ret.root.body.len());
+        // Body should have 5 children: div, text(\n), script, text(\n), div
+        assert_eq!(ret.root.body.len(), 5, "Expected 5 children, got {}", ret.root.body.len());
 
         // First should be an element
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
@@ -593,8 +592,11 @@ const name = "World";
             other => panic!("Expected Element, got {other:?}"),
         }
 
-        // Fourth should be an element
-        assert!(matches!(ret.root.body[3], JSXChild::Element(_)));
+        // Fourth should be text (newline between </script> and <div>)
+        assert!(matches!(ret.root.body[3], JSXChild::Text(_)));
+
+        // Fifth should be an element
+        assert!(matches!(ret.root.body[4], JSXChild::Element(_)));
     }
 
     #[test]
@@ -1728,7 +1730,7 @@ return;
         let source_type = SourceType::astro();
         // Expression container with whitespace around the inner element.
         // Leading whitespace is skipped by the JS tokeniser (insignificant).
-        // Trailing whitespace (`\n` before `}`) is preserved as a JSXText child.
+        // Trailing whitespace-only text node before `}` is stripped by the parser.
         let source = "{\n\t<div>Hello</div>\n}";
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
 
@@ -1743,28 +1745,13 @@ return;
                 &source[container.span.start as usize..container.span.end as usize];
             assert_eq!(container_text, source, "Container should span entire source");
 
-            // The expression is a fragment [Element(<div>), Text("\n")] because trailing
-            // whitespace before `}` is preserved as a JSXText child.
+            // With trailing whitespace stripped, the single <div> element is
+            // unwrapped from the implicit fragment — expression is JSXElement.
             assert!(
-                matches!(container.expression, JSXExpression::JSXFragment(_)),
-                "Expression should be a JSXFragment wrapping the element and trailing whitespace"
+                matches!(container.expression, JSXExpression::JSXElement(_)),
+                "Expression should be a JSXElement (single child after whitespace stripping), got {:?}",
+                std::mem::discriminant(&container.expression)
             );
-            if let JSXExpression::JSXFragment(ref frag) = container.expression {
-                assert_eq!(frag.children.len(), 2, "Fragment should have element + trailing text");
-                assert!(
-                    matches!(frag.children[0], JSXChild::Element(_)),
-                    "First child should be div element"
-                );
-                if let JSXChild::Text(ref text) = frag.children[1] {
-                    assert_eq!(
-                        text.value.as_str(),
-                        "\n",
-                        "Trailing whitespace should be preserved as JSXText"
-                    );
-                } else {
-                    panic!("Second child should be JSXText for trailing whitespace");
-                }
-            }
         } else {
             panic!("Expected JSXChild::ExpressionContainer");
         }
