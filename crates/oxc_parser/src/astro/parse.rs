@@ -56,11 +56,17 @@ struct AstroFrontmatterInfo {
 /// - Whitespace may appear before the opening fence
 /// - Opening/closing fences don't need to be on their own line
 /// - Code can appear on the same line as fences
+///
+/// Following the behavior of the official Astro compiler (`@astrojs/compiler`):
+/// if an HTML element (`<`), expression (`{`), or closing expression (`}`) appears
+/// before the first `---`, the file is considered to have **no frontmatter**.
+/// This prevents `---` inside `<style>`, `<script>`, or other body content from
+/// being misinterpreted as a frontmatter fence.
 fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
-    // Find the opening `---` fence
-    // According to spec: any content may appear before the fence (ignored),
-    // and whitespace may appear before it
-    let opening_fence_start = source_text.find("---")?;
+    // Find the opening `---` fence, but only if no HTML element or expression
+    // delimiter appears before it. Per the official Astro compiler, encountering
+    // `<`, `{`, or `}` before `---` means there is no frontmatter.
+    let opening_fence_start = find_opening_fence(source_text)?;
 
     // Content starts immediately after the opening `---`
     let content_start = opening_fence_start + 3;
@@ -81,6 +87,40 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
     }
 
     Some(AstroFrontmatterInfo { content_start, content_end, frontmatter_end, body_start })
+}
+
+/// Find the position of the opening `---` fence.
+///
+/// Scans from the start of the source text. If an HTML element delimiter (`<`),
+/// expression start (`{`), or expression end (`}`) is encountered before `---`,
+/// the file is considered to have no frontmatter.
+fn find_opening_fence(source_text: &str) -> Option<usize> {
+    let bytes = source_text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    let mut dash_count: u32 = 0;
+
+    while i < len {
+        let b = bytes[i];
+        match b {
+            b'-' => {
+                dash_count += 1;
+                if dash_count == 3 {
+                    // Found `---` — this is the opening fence
+                    return Some(i + 1 - 3);
+                }
+                i += 1;
+                continue;
+            }
+            // HTML element or expression delimiter before `---` → no frontmatter
+            b'<' | b'{' | b'}' => return None,
+            _ => {}
+        }
+        dash_count = 0;
+        i += 1;
+    }
+
+    None
 }
 
 /// Find the position of the closing `---` fence, skipping over strings, template literals,

@@ -437,7 +437,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 #[cfg(test)]
 mod test {
     use oxc_allocator::Allocator;
-    use oxc_ast::ast::{JSXChild, JSXElementName, JSXExpression, Statement};
+    use oxc_ast::ast::{
+        JSXAttributeItem, JSXAttributeName, JSXChild, JSXElementName, JSXExpression, Statement,
+    };
     use oxc_span::SourceType;
 
     use crate::Parser;
@@ -4419,5 +4421,154 @@ export async function getStaticPaths() {
         // Only the real <script is:inline> should be a script element, not the commented-out ones.
         assert_eq!(script_count, 1,
             "Expected 1 real script element, got {script_count}");
+    }
+
+    // === Edge case tests for `---` appearing in non-frontmatter contexts ===
+
+    #[test]
+    fn parse_astro_dashes_in_css_comment_no_frontmatter() {
+        // `---` inside a CSS comment should NOT be treated as a frontmatter fence
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<style>
+/* --- horizontal rule style --- */
+hr { border: 1px solid red; }
+</style>
+<div>Hello</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        // The key assertion: this should NOT have any frontmatter content
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert!(
+            frontmatter.program.body.is_empty(),
+            "Expected empty frontmatter, but got {} statements - the CSS comment `---` was wrongly treated as a fence",
+            frontmatter.program.body.len()
+        );
+        // Body should contain the style and div elements
+        assert!(!ret.root.body.is_empty(), "Body should not be empty");
+    }
+
+    #[test]
+    fn parse_astro_dashes_in_script_string_no_frontmatter() {
+        // `---` inside a script string should NOT be treated as a frontmatter fence
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<script>
+const msg = "--- separator ---";
+console.log(msg);
+</script>
+<div>Hello</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert!(
+            frontmatter.program.body.is_empty(),
+            "Expected empty frontmatter, but got {} statements - the script string `---` was wrongly treated as a fence",
+            frontmatter.program.body.len()
+        );
+        assert!(!ret.root.body.is_empty(), "Body should not be empty");
+    }
+
+    #[test]
+    fn parse_astro_dashes_in_css_comment_with_frontmatter() {
+        // `---` inside a CSS comment in the body should not interfere with parsing
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"---
+const x = 1;
+---
+<style>
+/* --- horizontal rule style --- */
+hr { border: 1px solid red; }
+</style>
+<div>Hello</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1, "Frontmatter should have 1 statement");
+        assert!(!ret.root.body.is_empty(), "Body should not be empty");
+    }
+
+    #[test]
+    fn parse_astro_dashes_in_script_string_with_frontmatter() {
+        // `---` inside a script string constant in the body should not interfere
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"---
+const x = 1;
+---
+<script>
+const msg = "--- separator ---";
+console.log(msg);
+</script>
+<div>Hello</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1, "Frontmatter should have 1 statement");
+        assert!(!ret.root.body.is_empty(), "Body should not be empty");
+    }
+
+    #[test]
+    fn parse_astro_extra_closing_brace_no_panic() {
+        // `content={Astro.generator}}` has an extra `}` — the parser should not panic.
+        // The stray `}` should be consumed as a (bogus) attribute name with no value.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"---
+
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator}} />
+		<title>Astro</title>
+	</head>
+	<body>
+		<h1>Astro</h1>
+	</body>
+</html>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        // We expect parse errors but no panic
+    }
+
+    #[test]
+    fn parse_astro_extra_closing_brace_becomes_attribute() {
+        // Minimal repro: the stray `}` after the expression should be parsed as
+        // a valueless attribute named `}`, not cause an infinite loop.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<meta name="generator" content={Astro.generator}} />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        if let JSXChild::Element(element) = &ret.root.body[0] {
+            let attrs = &element.opening_element.attributes;
+            // name, content={Astro.generator}, }
+            assert_eq!(attrs.len(), 3, "expected 3 attributes, got {attrs:?}");
+            // The third attribute should be the stray `}`
+            if let JSXAttributeItem::Attribute(attr) = &attrs[2] {
+                if let JSXAttributeName::Identifier(ident) = &attr.name {
+                    assert_eq!(ident.name.as_str(), "}");
+                } else {
+                    panic!("Expected Identifier attribute name for stray `}}`");
+                }
+                assert!(attr.value.is_none(), "stray `}}` attribute should have no value");
+            } else {
+                panic!("Expected Attribute, got SpreadAttribute");
+            }
+        } else {
+            panic!("Expected JSXChild::Element");
+        }
     }
 }
