@@ -201,8 +201,13 @@ mod astro_jsx {
         /// except whitespace, `=`, `>`, `/`, quotes, and a few others.
         ///
         /// This method reads from the current position until an attribute-name-ending character.
+        ///
+        /// If the very first byte is a terminator (e.g. a stray `}` or `=`), we consume
+        /// that single byte so the parser always makes forward progress and cannot
+        /// enter an infinite loop.
         pub(crate) fn read_astro_attribute_name(&mut self) -> Token {
-            self.token.set_start(self.offset());
+            let start = self.offset();
+            self.token.set_start(start);
 
             // Consume all valid attribute name characters (everything except terminators)
             let _next_byte = byte_search! {
@@ -212,6 +217,12 @@ mod astro_jsx {
                     return self.finish_next(Kind::Ident);
                 },
             };
+
+            // If the scan stopped immediately (first byte was a terminator), consume
+            // that one byte so we always make progress.
+            if self.offset() == start {
+                self.consume_char();
+            }
 
             // We found an ending character, stop here
             self.finish_next(Kind::Ident)
