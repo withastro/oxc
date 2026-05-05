@@ -1444,6 +1444,299 @@ const value = "test";
     }
 
     #[test]
+    fn parse_astro_unquoted_numeric_attribute() {
+        // Regression test for withastro/compiler-rs#33: unquoted numeric values
+        // (`minlength=4`) used to tokenize as `Kind::Number` and trip the JSX
+        // attribute-value parser's "Unexpected token" branch.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<input type="text" minlength=4 maxlength=255 />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 3);
+
+        let unquoted_value = |idx: usize| -> &str {
+            let JSXAttributeItem::Attribute(attr) = &attrs[idx] else {
+                panic!("Expected Attribute at {idx}");
+            };
+            let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
+                panic!("Expected StringLiteral value at {idx}, got {:?}", attr.value);
+            };
+            str_lit.value.as_str()
+        };
+
+        assert_eq!(unquoted_value(1), "4");
+        assert_eq!(unquoted_value(2), "255");
+    }
+
+    #[test]
+    fn parse_astro_unquoted_attribute_with_dashes_and_hash() {
+        // The previous `Kind::Ident` branch only captured the leading identifier,
+        // so `data-id=hello-world` ended up as `"hello"` and `color=#abc123`
+        // failed to parse. The HTML-style unquoted reader handles both.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data-id=hello-world data-color=#abc123>x</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 2);
+
+        let unquoted_value = |idx: usize| -> &str {
+            let JSXAttributeItem::Attribute(attr) = &attrs[idx] else {
+                panic!("Expected Attribute at {idx}");
+            };
+            let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
+                panic!("Expected StringLiteral value at {idx}, got {:?}", attr.value);
+            };
+            str_lit.value.as_str()
+        };
+
+        assert_eq!(unquoted_value(0), "hello-world");
+        assert_eq!(unquoted_value(1), "#abc123");
+    }
+
+    #[test]
+    fn parse_astro_unquoted_attribute_then_self_closing() {
+        // The unquoted reader must stop at `/` so `<input value=4/>` still self-closes.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<input value=4/>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert!(element.closing_element.is_none(), "expected self-closing element");
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 1);
+
+        let JSXAttributeItem::Attribute(attr) = &attrs[0] else {
+            panic!("Expected Attribute");
+        };
+        let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
+            panic!("Expected StringLiteral value, got {:?}", attr.value);
+        };
+        assert_eq!(str_lit.value.as_str(), "4");
+    }
+
+    #[test]
+    fn parse_astro_quoted_and_expression_attributes_still_work() {
+        // The new unquoted-value path must not regress string or expression attributes.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<input type="text" value={x} other='y' />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 3);
+
+        let JSXAttributeItem::Attribute(type_attr) = &attrs[0] else {
+            panic!("Expected Attribute at 0");
+        };
+        assert!(matches!(type_attr.value, Some(JSXAttributeValue::StringLiteral(_))));
+
+        let JSXAttributeItem::Attribute(value_attr) = &attrs[1] else {
+            panic!("Expected Attribute at 1");
+        };
+        assert!(matches!(value_attr.value, Some(JSXAttributeValue::ExpressionContainer(_))));
+
+        let JSXAttributeItem::Attribute(other_attr) = &attrs[2] else {
+            panic!("Expected Attribute at 2");
+        };
+        assert!(matches!(other_attr.value, Some(JSXAttributeValue::StringLiteral(_))));
+    }
+
+    #[test]
+    fn parse_astro_unquoted_attribute_in_middle_of_list() {
+        // Sibling attributes on either side must still parse across the lexer rewind.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<input id=foo class="bar" data-x=42 disabled />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 4);
+
+        let attr = |idx: usize| -> &oxc_ast::ast::JSXAttribute<'_> {
+            let JSXAttributeItem::Attribute(a) = &attrs[idx] else {
+                panic!("Expected Attribute at {idx}");
+            };
+            a
+        };
+
+        let JSXAttributeName::Identifier(name) = &attr(0).name else {
+            panic!("expected ident name");
+        };
+        assert_eq!(name.name.as_str(), "id");
+        assert!(matches!(attr(0).value, Some(JSXAttributeValue::StringLiteral(_))));
+
+        let JSXAttributeName::Identifier(name) = &attr(1).name else {
+            panic!("expected ident name");
+        };
+        assert_eq!(name.name.as_str(), "class");
+        let Some(JSXAttributeValue::StringLiteral(class_lit)) = &attr(1).value else {
+            panic!("class should be quoted string");
+        };
+        assert_eq!(class_lit.value.as_str(), "bar");
+
+        let JSXAttributeName::Identifier(name) = &attr(2).name else {
+            panic!("expected ident name");
+        };
+        assert_eq!(name.name.as_str(), "data-x");
+        let Some(JSXAttributeValue::StringLiteral(data_lit)) = &attr(2).value else {
+            panic!("data-x should produce a string literal");
+        };
+        assert_eq!(data_lit.value.as_str(), "42");
+
+        let JSXAttributeName::Identifier(name) = &attr(3).name else {
+            panic!("expected ident name");
+        };
+        assert_eq!(name.name.as_str(), "disabled");
+        assert!(attr(3).value.is_none(), "boolean attr should have no value");
+    }
+
+    #[test]
+    fn parse_astro_unquoted_attribute_with_children() {
+        // The unquoted reader must stop at `>` so children parse, not get swallowed.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data-count=3>hello</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert!(element.closing_element.is_some(), "expected non-self-closing");
+        assert_eq!(element.opening_element.attributes.len(), 1);
+        assert_eq!(element.children.len(), 1);
+        assert!(matches!(element.children[0], JSXChild::Text(_)));
+    }
+
+    #[test]
+    fn parse_astro_unquoted_attribute_value_stops_at_newline() {
+        // An unquoted value must terminate at whitespace, including newlines.
+        // Otherwise multi-line attribute lists would silently swallow the
+        // following attribute names.
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<input\n  data-x=42\n  data-y=99\n/>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 2);
+
+        let attr_value = |idx: usize| -> &str {
+            let JSXAttributeItem::Attribute(a) = &attrs[idx] else {
+                panic!("Expected Attribute at {idx}");
+            };
+            let Some(JSXAttributeValue::StringLiteral(lit)) = &a.value else {
+                panic!("expected string literal at {idx}");
+            };
+            lit.value.as_str()
+        };
+        assert_eq!(attr_value(0), "42");
+        assert_eq!(attr_value(1), "99");
+    }
+
+    #[test]
+    fn parse_astro_unquoted_value_has_correct_span() {
+        // The lexer rewind in the unquoted-value path must produce a span that
+        // exactly covers the value characters in the source — not the wider
+        // span the JS lexer would have produced for a partial token.
+        use oxc_ast::ast::JSXAttributeValue;
+        use oxc_span::GetSpan;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<div data-x=hello-world>x</div>"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXAttributeItem::Attribute(attr) = &element.opening_element.attributes[0] else {
+            panic!("Expected Attribute");
+        };
+        let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
+            panic!("Expected StringLiteral");
+        };
+
+        let value_start = source.find("hello-world").unwrap() as u32;
+        let value_end = value_start + "hello-world".len() as u32;
+        assert_eq!(str_lit.span().start, value_start);
+        assert_eq!(str_lit.span().end, value_end);
+    }
+
+    #[test]
+    fn parse_astro_empty_value_reports_error_at_terminator() {
+        // `<Comp value= />` is malformed: `attr=` with no value. The diagnostic
+        // must point at the `/`, not silently consume it as the value — that
+        // would break self-closing and surface the error far from the cause.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r#"<Comp value= />"#;
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+
+        assert!(!ret.errors.is_empty(), "expected a diagnostic for empty unquoted value");
+
+        let slash_offset = source.find('/').unwrap() as u32;
+        assert!(
+            ret.errors.iter().any(|e| e
+                .labels
+                .as_ref()
+                .is_some_and(|labels| labels.iter().any(|l| l.offset() as u32 == slash_offset))),
+            "expected diagnostic at offset {slash_offset}, got {:?}",
+            ret.errors
+        );
+    }
+
+    #[test]
     fn parse_astro_void_element_without_closing() {
         let allocator = Allocator::default();
         let source_type = SourceType::astro();

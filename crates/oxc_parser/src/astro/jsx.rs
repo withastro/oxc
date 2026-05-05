@@ -575,13 +575,6 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                     .alloc_jsx_expression_container(self.end_span(span), JSXExpression::from(expr));
                 JSXAttributeValue::ExpressionContainer(expr_container)
             }
-            Kind::Ident => {
-                let span = self.start_span();
-                let value = Atom::from(self.cur_src());
-                self.bump_any();
-                let str_lit = self.ast.string_literal(self.end_span(span), value, None);
-                JSXAttributeValue::StringLiteral(self.alloc(str_lit))
-            }
             Kind::LCurly => {
                 let span_start = self.start_span();
                 self.bump_any(); // bump `{`
@@ -590,7 +583,29 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 );
                 JSXAttributeValue::ExpressionContainer(expr)
             }
-            _ => self.parse_jsx_attribute_value(),
+            Kind::Str | Kind::LAngle => self.parse_jsx_attribute_value(),
+            // Unquoted HTML value: re-lex from token start under HTML rules so
+            // the JS lexer doesn't reject `4` or split `hello-world`. Bail out
+            // when the cur byte is a structural terminator so `attr=` followed
+            // by `/>` reports the error at the `/` instead of swallowing it.
+            _ => {
+                let token_start = self.cur_token().span().start as usize;
+                let starts_with_terminator = self
+                    .source_text
+                    .as_bytes()
+                    .get(token_start)
+                    .is_none_or(|b| matches!(b, b'/' | b'>' | b'<' | b'}'));
+                if starts_with_terminator {
+                    return self.unexpected();
+                }
+                self.lexer.set_position_for_astro(token_start as u32);
+                self.read_astro_unquoted_attribute_value();
+                let value_span = self.cur_token().span();
+                let value = Atom::from(value_span.source_text(self.source_text));
+                self.bump_any();
+                let str_lit = self.ast.string_literal(value_span, value, None);
+                JSXAttributeValue::StringLiteral(self.alloc(str_lit))
+            }
         }
     }
 

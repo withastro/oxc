@@ -43,6 +43,14 @@ mod astro_jsx {
         b'=' | b'>' | b'/' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'<'
     ));
 
+    /// Per HTML spec, unquoted attribute values cannot contain whitespace, `"`,
+    /// `'`, `=`, `<`, `>`, or backtick. We additionally stop at `/`, `{`, and
+    /// `}` so JSX self-closing tags and Astro expressions remain parseable.
+    static ASTRO_UNQUOTED_ATTR_VALUE_END_TABLE: SafeByteMatchTable = safe_byte_match_table!(|b| matches!(
+        b,
+        b'=' | b'>' | b'/' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'<' | b'"' | b'\'' | b'`'
+    ));
+
     /// Astro/HTML text content can include `>` as literal text (unlike JSX).
     /// We stop at `<` (potential tag), `{` (expression start), or `}` (expression end).
     /// Note: `}` must still be included because it ends expression containers.
@@ -225,6 +233,31 @@ mod astro_jsx {
             }
 
             // We found an ending character, stop here
+            self.finish_next(Kind::Ident)
+        }
+
+        /// Lex an unquoted HTML-style Astro attribute value at the current position.
+        ///
+        /// Always emits `Kind::Ident` so unquoted numbers (`maxlength=255`) and
+        /// non-identifier values (`color=#abc123`) flow through the existing
+        /// string-valued attribute path.
+        pub(crate) fn read_astro_unquoted_attribute_value(&mut self) -> Token {
+            let start = self.offset();
+            self.token.set_start(start);
+
+            let _next_byte = byte_search! {
+                lexer: self,
+                table: ASTRO_UNQUOTED_ATTR_VALUE_END_TABLE,
+                handle_eof: {
+                    return self.finish_next(Kind::Ident);
+                },
+            };
+
+            // Consume one byte to avoid an infinite loop if called on a bare terminator.
+            if self.offset() == start {
+                self.consume_char();
+            }
+
             self.finish_next(Kind::Ident)
         }
     }

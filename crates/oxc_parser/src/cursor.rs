@@ -255,6 +255,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.token = self.lexer.read_astro_attribute_name();
     }
 
+    /// Read an unquoted Astro attribute value from the current position.
+    #[cfg(feature = "astro")]
+    pub(crate) fn read_astro_unquoted_attribute_value(&mut self) {
+        self.token = self.lexer.read_astro_unquoted_attribute_value();
+    }
+
     #[inline]
     pub(crate) fn re_lex_right_angle(&mut self) -> Kind {
         if self.fatal_error.is_some() {
