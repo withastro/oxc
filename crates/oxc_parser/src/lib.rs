@@ -469,6 +469,11 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// Precomputed typescript detection
     is_ts: bool,
+
+    /// Stack of currently-open Astro element names (by source text), used to
+    /// detect stray closing tags that have no matching opening tag.
+    #[cfg(feature = "astro")]
+    astro_open_elements: Vec<&'a str>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -501,6 +506,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             ast: AstBuilder::new(allocator),
             module_record_builder: ModuleRecordBuilder::new(allocator, source_type),
             is_ts: source_type.is_typescript(),
+            #[cfg(feature = "astro")]
+            astro_open_elements: Vec::new(),
         }
     }
 

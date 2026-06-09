@@ -4864,4 +4864,56 @@ console.log(msg);
             panic!("Expected JSXChild::Element");
         }
     }
+
+    #[test]
+    fn parse_astro_stray_closing_tag_reports_unmatched() {
+        // An extra `</div>` with no matching open tag should be reported at its
+        // own location, not blamed on an unrelated ancestor element.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<section><div>hi</div></div></section>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+
+        let msg = ret.errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+        assert_eq!(ret.errors.len(), 1, "expected exactly one error, got: {msg}");
+        assert!(
+            msg.contains("Closing tag '</div>' has no matching opening tag."),
+            "unexpected error message: {msg}"
+        );
+
+        // Recovery: <section> still pairs with its own </section>.
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Element(section) = &ret.root.body[0] else {
+            panic!("expected <section> element");
+        };
+        assert!(section.closing_element.is_some(), "<section> should be closed");
+    }
+
+    #[test]
+    fn parse_astro_stray_closing_tag_recovers_following_siblings() {
+        // After skipping the stray `</div>`, the following `<p>` sibling must
+        // still be parsed as a child of `<main>`.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<main><div>a</div></div><p>after</p></main>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+
+        let msg = ret.errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+        assert_eq!(ret.errors.len(), 1, "expected exactly one error, got: {msg}");
+        assert!(
+            msg.contains("Closing tag '</div>' has no matching opening tag."),
+            "unexpected error message: {msg}"
+        );
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Element(main) = &ret.root.body[0] else {
+            panic!("expected <main> element");
+        };
+        assert!(main.closing_element.is_some(), "<main> should be closed");
+        let element_children =
+            main.children.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
+        assert_eq!(element_children, 2, "expected <div> and <p> as children of <main>");
+    }
 }

@@ -123,6 +123,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let (children, closing_element) = if self_closing {
             (self.ast.vec(), None)
         } else {
+            // Track this element as open so nested children can detect stray
+            // closing tags (e.g. an extra `</div>`) that match no open element.
+            self.astro_open_elements
+                .push(opening_element.name.span().source_text(self.source_text));
+
             // Raw text elements (script/style/is:raw): content is raw text, not JSX children.
             let (children, closing) = if is_raw_text_element {
                 let children =
@@ -140,6 +145,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 self.lexer.no_expression_in_jsx_children = prev_no_expression;
                 result
             };
+
+            // This element is no longer open.
+            let _ = self.astro_open_elements.pop();
 
             let closing_element = match closing {
                 JSXClosing::Element(e) => {
@@ -299,6 +307,20 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                     if kind == Kind::Slash {
                         self.bump_any(); // bump `/`
                         let closing = self.parse_astro_jsx_closing_inline(span, in_jsx_child);
+                        // A named closing tag that matches no currently-open element is
+                        // stray (e.g. an extra `</div>`). Report it at its own location
+                        // and skip it, so the surrounding elements still pair up correctly
+                        // instead of blaming an unrelated ancestor.
+                        if let JSXClosing::Element(e) = &closing {
+                            let closing_name = e.name.span().source_text(self.source_text);
+                            if !self.astro_open_elements.contains(&closing_name) {
+                                self.error(diagnostics::jsx_unexpected_closing_tag(
+                                    e.name.span(),
+                                    closing_name,
+                                ));
+                                continue;
+                            }
+                        }
                         return (children, closing);
                     }
 
