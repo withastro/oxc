@@ -440,12 +440,17 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                         self.bump_any(); // bump `}`
                         continue;
                     }
-                    // `{prop}` can be shorthand for `prop={prop}`
-                    if let Some(attr) = self.try_parse_astro_shorthand_attribute() {
+                    // `{...spread}`
+                    if self.lexer.peek_token().kind() == Kind::Dot3 {
+                        JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
+                    } else if let Some(attr) = self.try_parse_astro_shorthand_attribute() {
+                        // `{prop}` shorthand for `prop={prop}`
                         attributes.push(JSXAttributeItem::Attribute(attr));
                         continue;
+                    } else {
+                        // Any other `{expr}` (e.g. `{{ answer: 1 }}`) is shorthand
+                        JSXAttributeItem::Attribute(self.parse_astro_expression_shorthand_attribute())
                     }
-                    JSXAttributeItem::SpreadAttribute(self.parse_jsx_spread_attribute())
                 }
                 // Quotes can appear in Astro attribute names
                 Kind::Str | Kind::Undetermined => {
@@ -558,6 +563,29 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         self.rewind(checkpoint);
         None
+    }
+
+    /// Parse an Astro shorthand attribute whose expression is not a bare
+    /// identifier, e.g. `{{ answer: sum(2, 4) }}`. The attribute name is the
+    /// source text of the inner expression (matching the Go compiler).
+    fn parse_astro_expression_shorthand_attribute(&mut self) -> Box<'a, JSXAttribute<'a>> {
+        let span = self.start_span();
+        self.bump_any(); // bump `{`
+
+        let expr_start = self.cur_token().span().start;
+        let expr = self.parse_expr();
+        let name_span = Span::new(expr_start, self.prev_token_end);
+        self.expect(Kind::RCurly);
+
+        let name = Atom::from(name_span.source_text(self.source_text).trim());
+        let identifier = self.ast.jsx_identifier(name_span, name);
+        let attr_name = JSXAttributeName::Identifier(self.alloc(identifier));
+
+        let expr_container =
+            self.ast.alloc_jsx_expression_container(name_span, JSXExpression::from(expr));
+        let value = JSXAttributeValue::ExpressionContainer(expr_container);
+
+        self.ast.alloc_jsx_attribute(self.end_span(span), attr_name, Some(value))
     }
 
     /// Parse an Astro attribute which can have special characters in the name.

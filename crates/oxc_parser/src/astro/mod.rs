@@ -1268,6 +1268,60 @@ const name = "World";
         }
     }
 
+    // A non-identifier `{expr}` is a shorthand whose name is the expression source text.
+    #[test]
+    fn parse_astro_attribute_shorthand_object_expression() {
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Debug {{answer: sum(2, 4)}} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 1);
+
+        let JSXAttributeItem::Attribute(attr) = &attrs[0] else {
+            panic!("Expected Attribute, got SpreadAttribute");
+        };
+        let JSXAttributeName::Identifier(name) = &attr.name else {
+            panic!("expected ident name");
+        };
+        assert_eq!(name.name.as_str(), "{answer: sum(2, 4)}");
+
+        let Some(JSXAttributeValue::ExpressionContainer(container)) = &attr.value else {
+            panic!("expected expression container value");
+        };
+        assert!(matches!(container.expression, JSXExpression::ObjectExpression(_)));
+    }
+
+    // `{...spread}` must still parse as a spread attribute, not a shorthand.
+    #[test]
+    fn parse_astro_attribute_spread() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Component {...props} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 1);
+        assert!(
+            matches!(attrs[0], JSXAttributeItem::SpreadAttribute(_)),
+            "expected SpreadAttribute, got {:?}",
+            attrs[0]
+        );
+    }
+
     #[test]
     fn parse_astro_multiple_special_attributes() {
         let allocator = Allocator::default();
@@ -1727,10 +1781,11 @@ const value = "test";
 
         let slash_offset = source.find('/').unwrap() as u32;
         assert!(
-            ret.errors.iter().any(|e| e
-                .labels
-                .as_ref()
-                .is_some_and(|labels| labels.iter().any(|l| l.offset() as u32 == slash_offset))),
+            ret.errors
+                .iter()
+                .any(|e| e.labels.as_ref().is_some_and(|labels| labels
+                    .iter()
+                    .any(|l| l.offset() as u32 == slash_offset))),
             "expected diagnostic at offset {slash_offset}, got {:?}",
             ret.errors
         );
@@ -4621,10 +4676,10 @@ export async function getStaticPaths() {
             } else {
                 panic!("expected ExpressionContainer child");
             }
-         } else {
-             panic!("expected Element at root");
-         }
-     }
+        } else {
+            panic!("expected Element at root");
+        }
+    }
 
     #[test]
     fn parse_astro_html_comment_containing_script_tags() {
@@ -4687,33 +4742,45 @@ export async function getStaticPaths() {
 
         let comment_count =
             ret.root.body.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
-        let script_count =
-            ret.root.body.iter().filter(|c| matches!(c, JSXChild::Element(el) if {
-                match &el.opening_element.name {
-                    JSXElementName::Identifier(ident) => ident.name.as_str() == "script",
-                    _ => false,
-                }
-            })).count();
+        let script_count = ret
+            .root
+            .body
+            .iter()
+            .filter(|c| {
+                matches!(c, JSXChild::Element(el) if {
+                    match &el.opening_element.name {
+                        JSXElementName::Identifier(ident) => ident.name.as_str() == "script",
+                        _ => false,
+                    }
+                })
+            })
+            .count();
 
-        assert_eq!(comment_count, 2,
+        assert_eq!(
+            comment_count,
+            2,
             "Expected 2 HTML comments, got {comment_count}. Children: {:?}",
-            ret.root.body.iter().map(|c| match c {
-                JSXChild::AstroComment(_) => "Comment".to_string(),
-                JSXChild::Element(el) => {
-                    let name = match &el.opening_element.name {
-                        JSXElementName::Identifier(ident) => ident.name.to_string(),
-                        _ => "?".to_string(),
-                    };
-                    format!("Element({name})")
-                }
-                JSXChild::Text(t) => format!("Text({:?})", &t.value.as_str()[..t.value.len().min(20)]),
-                JSXChild::AstroScript(_) => "AstroScript".to_string(),
-                _ => "Other".to_string(),
-            }).collect::<Vec<_>>()
+            ret.root
+                .body
+                .iter()
+                .map(|c| match c {
+                    JSXChild::AstroComment(_) => "Comment".to_string(),
+                    JSXChild::Element(el) => {
+                        let name = match &el.opening_element.name {
+                            JSXElementName::Identifier(ident) => ident.name.to_string(),
+                            _ => "?".to_string(),
+                        };
+                        format!("Element({name})")
+                    }
+                    JSXChild::Text(t) =>
+                        format!("Text({:?})", &t.value.as_str()[..t.value.len().min(20)]),
+                    JSXChild::AstroScript(_) => "AstroScript".to_string(),
+                    _ => "Other".to_string(),
+                })
+                .collect::<Vec<_>>()
         );
         // Only the real <script is:inline> should be a script element, not the commented-out ones.
-        assert_eq!(script_count, 1,
-            "Expected 1 real script element, got {script_count}");
+        assert_eq!(script_count, 1, "Expected 1 real script element, got {script_count}");
     }
 
     // === Edge case tests for `---` appearing in non-frontmatter contexts ===
