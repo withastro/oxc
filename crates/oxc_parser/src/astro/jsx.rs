@@ -449,7 +449,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                         continue;
                     } else {
                         // Any other `{expr}` (e.g. `{{ answer: 1 }}`) is shorthand
-                        JSXAttributeItem::Attribute(self.parse_astro_expression_shorthand_attribute())
+                        JSXAttributeItem::Attribute(
+                            self.parse_astro_expression_shorthand_attribute(),
+                        )
                     }
                 }
                 // Quotes can appear in Astro attribute names
@@ -603,18 +605,41 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let identifier = self.ast.jsx_identifier(name_span, name);
         let attr_name = JSXAttributeName::Identifier(self.alloc(identifier));
 
-        let value = if self.at(Kind::Eq) {
-            self.expect_jsx_attribute_value(Kind::Eq);
-            Some(self.parse_astro_attribute_value())
-        } else {
-            None
-        };
+        let value = if self.at(Kind::Eq) { Some(self.parse_astro_attribute_value()) } else { None };
 
         self.ast.alloc_jsx_attribute(self.end_span(span), attr_name, value)
     }
 
-    /// Parse an Astro attribute value, which can include template literals and unquoted values.
+    /// Parse an Astro attribute value. Called while positioned at `=`.
+    ///
+    /// The lexing mode is chosen from the raw bytes after `=` *before* the JS
+    /// lexer runs, so unquoted HTML values reach the Astro reader instead of
+    /// being rejected as malformed JS tokens (e.g. `color=#18b218`). Quoted
+    /// strings, `{expr}` and templates still lex as JS/JSX.
     fn parse_astro_attribute_value(&mut self) -> JSXAttributeValue<'a> {
+        let bytes = self.source_text.as_bytes();
+        let mut value_start = self.cur_token().end() as usize;
+        while matches!(bytes.get(value_start), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+            value_start += 1;
+        }
+        // A structural terminator (`/`, `>`, `}`, EOF) means the value is missing
+        // (`attr=` before `/>`); fall through to the JS path to report it there.
+        let is_unquoted = bytes
+            .get(value_start)
+            .is_some_and(|b| !matches!(b, b'"' | b'\'' | b'{' | b'`' | b'<' | b'/' | b'>' | b'}'));
+
+        if is_unquoted {
+            self.prev_token_end = self.cur_token().end(); // consume `=`
+            self.lexer.set_position_for_astro(value_start as u32);
+            self.read_astro_unquoted_attribute_value();
+            let value_span = self.cur_token().span();
+            let value = Atom::from(value_span.source_text(self.source_text));
+            self.bump_any();
+            let str_lit = self.ast.string_literal(value_span, value, None);
+            return JSXAttributeValue::StringLiteral(self.alloc(str_lit));
+        }
+
+        self.expect_jsx_attribute_value(Kind::Eq);
         match self.cur_kind() {
             Kind::NoSubstitutionTemplate | Kind::TemplateHead => {
                 let span = self.start_span();
@@ -634,10 +659,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 JSXAttributeValue::ExpressionContainer(expr)
             }
             Kind::Str | Kind::LAngle => self.parse_jsx_attribute_value(),
-            // Unquoted HTML value: re-lex from token start under HTML rules so
-            // the JS lexer doesn't reject `4` or split `hello-world`. Bail out
-            // when the cur byte is a structural terminator so `attr=` followed
-            // by `/>` reports the error at the `/` instead of swallowing it.
+            // Reached only via the JS path for a token that isn't a recognized
+            // value start (e.g. a comment before the value). Bail on a structural
+            // terminator, otherwise re-read under HTML rules.
             _ => {
                 let token_start = self.cur_token().span().start as usize;
                 let starts_with_terminator = self

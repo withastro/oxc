@@ -1567,6 +1567,37 @@ const value = "test";
     }
 
     #[test]
+    fn parse_astro_unquoted_attribute_hash_color_with_digit() {
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<div color=#18b218 background=#686868>x</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let attrs = &element.opening_element.attributes;
+        assert_eq!(attrs.len(), 2);
+
+        let unquoted_value = |idx: usize| -> &str {
+            let JSXAttributeItem::Attribute(attr) = &attrs[idx] else {
+                panic!("Expected Attribute at {idx}");
+            };
+            let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
+                panic!("Expected StringLiteral value at {idx}, got {:?}", attr.value);
+            };
+            str_lit.value.as_str()
+        };
+
+        assert_eq!(unquoted_value(0), "#18b218");
+        assert_eq!(unquoted_value(1), "#686868");
+    }
+
+    #[test]
     fn parse_astro_unquoted_attribute_then_self_closing() {
         // The unquoted reader must stop at `/` so `<input value=4/>` still self-closes.
         use oxc_ast::ast::JSXAttributeValue;
