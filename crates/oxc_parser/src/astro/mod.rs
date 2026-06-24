@@ -143,15 +143,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         // Check if this is a comment (starts with `<!--`) or a doctype (starts with `<!doctype` or `<!DOCTYPE`)
         if let Some(rest) = self.source_text.get(start_pos..) {
             // Check for HTML comment `<!--`
-            if rest.starts_with("!--") {
-                // Find `-->` to close the comment
-                if let Some(end_offset) = rest.find("-->") {
-                    let comment_end = (start_pos + end_offset + 3) as u32;
+            if let Some(after_open) = rest.strip_prefix("!--") {
+                // Close must come after the open; an overlapping `<!-->` is not a
+                // real comment (and naive search would slice backwards and panic).
+                if let Some(content_len) = after_open.find("-->") {
+                    let comment_end = (start_pos + 3 + content_len + 3) as u32;
                     let comment_start = span; // `<` position
 
-                    // Extract comment content (between `<!--` and `-->`)
-                    // rest starts with "!--", so content starts at index 3
-                    let content = &rest[3..end_offset];
+                    let content = &after_open[..content_len];
                     let value = oxc_span::Atom::from(content);
 
                     // Create the AstroComment node
@@ -438,7 +437,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 mod test {
     use oxc_allocator::Allocator;
     use oxc_ast::ast::{
-        JSXAttributeItem, JSXAttributeName, JSXChild, JSXElementName, JSXExpression, Statement,
+        Expression, JSXAttributeItem, JSXAttributeName, JSXChild, JSXElementName, JSXExpression,
+        Statement,
     };
     use oxc_span::SourceType;
 
@@ -5013,5 +5013,123 @@ console.log(msg);
         let element_children =
             main.children.iter().filter(|c| matches!(c, JSXChild::Element(_))).count();
         assert_eq!(element_children, 2, "expected <div> and <p> as children of <main>");
+    }
+
+    #[test]
+    fn parse_astro_second_script_in_expression_is_raw_text() {
+        // A non-first `<script>` sibling in a `{ ... }` expression must still parse
+        // its body as raw text, or a close tag in a template literal becomes a
+        // stray closing-tag error.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{enabled && (\n  <script src=\"x.js\"></script>\n  <script>var a = `</article>`;</script>\n)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+    }
+
+    #[test]
+    fn parse_astro_bare_siblings_in_expression_keep_whitespace() {
+        // Whitespace between bare JSX siblings in a `{ ... }` expression must
+        // survive as a JSXText child (the JS lexer skips it otherwise).
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{x && (<em>a</em>\n  <span>b</span>)}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::ExpressionContainer(container) = &ret.root.body[0] else {
+            panic!("expected expression container");
+        };
+        let Some(Expression::LogicalExpression(logical)) = container.expression.as_expression()
+        else {
+            panic!("expected `&&` logical expression");
+        };
+        let right = match &logical.right {
+            Expression::ParenthesizedExpression(paren) => &paren.expression,
+            other => other,
+        };
+        let Expression::JSXFragment(fragment) = right else {
+            panic!("expected implicit fragment for bare siblings, got {right:?}");
+        };
+        let text_children = fragment
+            .children
+            .iter()
+            .filter(|c| matches!(c, JSXChild::Text(_)))
+            .count();
+        assert_eq!(text_children, 1, "inter-sibling whitespace should be a JSXText node");
+    }
+
+    #[test]
+    fn parse_astro_overlapping_comment_marker_does_not_panic() {
+        // `<!-->` overlaps the `-->` with the `<!--` open; the comment parsers must
+        // look for the close at offset >= 3, not slice `rest[3..1]` and panic.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        for source in ["{<a/><!-->}", "<!-->", "<div><!--></div>", "{x && (<a/><!-->)}"] {
+            // The contract is "no panic"; some of these are still errors.
+            let _ = Parser::new(&allocator, source, source_type).parse_astro();
+        }
+    }
+
+    #[test]
+    fn parse_astro_comment_between_bare_siblings() {
+        // An HTML comment in a run of bare JSX siblings is kept as an AstroComment
+        // child (matching Go), including the common case of the comment on its own
+        // line, which only works because the lexer no longer line-comments `<!--`.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        for source in [
+            "{x && (<a/><!--c--><b/>)}",
+            "{x && (\n  <a/>\n  <!-- c -->\n  <b/>\n)}",
+            "{x && (<a/><!--c-->)}",
+        ] {
+            let ret = Parser::new(&allocator, source, source_type).parse_astro();
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+
+            let JSXChild::ExpressionContainer(container) = &ret.root.body[0] else {
+                panic!("expected expression container for {source:?}");
+            };
+            let Some(Expression::LogicalExpression(logical)) =
+                container.expression.as_expression()
+            else {
+                panic!("expected `&&` logical expression for {source:?}");
+            };
+            let right = match &logical.right {
+                Expression::ParenthesizedExpression(paren) => &paren.expression,
+                other => other,
+            };
+            let Expression::JSXFragment(fragment) = right else {
+                panic!("expected implicit fragment for {source:?}, got {right:?}");
+            };
+            let comments =
+                fragment.children.iter().filter(|c| matches!(c, JSXChild::AstroComment(_))).count();
+            assert_eq!(comments, 1, "{source:?} should keep the comment as a child");
+        }
+    }
+
+    #[test]
+    fn parse_astro_jsx_lt_comparison_still_parses() {
+        // The comment heuristic only diverts when the left side is a JSX element, so
+        // an ordinary JS `< !--` (less-than, negated pre-decrement) is untouched even
+        // when a `-->` appears later. Must not be misread as a comment.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        for source in ["{(3 < !--n, m-->q)}", "{x && y < !--count}"] {
+            let ret = Parser::new(&allocator, source, source_type).parse_astro();
+            assert!(ret.errors.is_empty(), "{source:?} should parse: {:?}", ret.errors);
+        }
+    }
+
+    #[test]
+    fn parse_astro_shorthand_attribute_fatal_expr_does_not_panic() {
+        // Guards the inverted name-span panic when a shorthand-attribute `{…}`
+        // expression fails to parse without advancing the lexer.
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        for source in ["<div><div{\n)</div>", "{x && (<a/>\n<div{\n)}", "<Comp {(\n} />"] {
+            // The contract is "no panic"; these are still errors.
+            let _ = Parser::new(&allocator, source, source_type).parse_astro();
+        }
     }
 }

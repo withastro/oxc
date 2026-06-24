@@ -473,16 +473,31 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Astro-specific: Peek ahead past `<` to check if the next token starts a JSX element
     /// or fragment. Used in binary expression context to distinguish `<div>` from `< comparison`.
     ///
-    /// Returns `true` if `<` is followed by an identifier, keyword, or `>` (fragment).
-    /// Does not consume any tokens.
+    /// Returns `true` if `<` is followed by an identifier, keyword, `>` (fragment), or a
+    /// complete `<!-- -->` comment. Does not consume any tokens.
     pub(crate) fn is_astro_jsx_after_lt(&mut self) -> bool {
         let checkpoint = self.checkpoint();
         self.bump_any(); // bump `<`
         let next_kind = self.cur_kind();
-        let is_jsx =
-            next_kind == Kind::RAngle || next_kind == Kind::Ident || next_kind.is_any_keyword();
+        let is_jsx = next_kind == Kind::RAngle
+            || next_kind == Kind::Ident
+            || next_kind.is_any_keyword()
+            || self.at_astro_html_comment();
         self.rewind(checkpoint);
         is_jsx
+    }
+
+    /// `true` when the bytes right after the just-bumped `<` open a complete
+    /// `<!-- … -->` comment, letting it continue a run of sibling JSX.
+    ///
+    /// Requiring a real `-->` keeps the JS `< !--x` (negated pre-decrement) a
+    /// comparison, and stops the binary parser looping on a `<!--` it can't consume.
+    fn at_astro_html_comment(&self) -> bool {
+        // `prev_token_end` is the byte right after `<` (no whitespace skipped),
+        // so a `< !--` comparison is excluded; only `<!--` matches.
+        self.source_text
+            .get(self.prev_token_end as usize..)
+            .is_some_and(|rest| rest.starts_with("!--") && rest[3..].contains("-->"))
     }
 
     /// Astro-specific: Parse multiple JSX elements in binary expression context.
@@ -502,17 +517,44 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
 
         while self.at(Kind::LAngle) {
+            // The JS lexer skips whitespace between siblings; record where the
+            // gap starts so it can be preserved (see the helper call below).
+            let ws_start = self.prev_token_end;
             let checkpoint = self.checkpoint();
             let child_span = self.start_span();
             self.bump_any(); // bump `<`
 
             let kind = self.cur_kind();
             if kind == Kind::RAngle {
+                self.push_astro_inter_sibling_whitespace(&mut children, ws_start, child_span);
                 let fragment = self.parse_astro_jsx_fragment(child_span, false);
                 children.push(JSXChild::Fragment(fragment));
             } else if kind == Kind::Ident || kind.is_any_keyword() {
-                let element = self.parse_astro_jsx_element(child_span, false);
-                children.push(JSXChild::Element(element));
+                self.push_astro_inter_sibling_whitespace(&mut children, ws_start, child_span);
+                // `<script>` needs the dedicated raw-text path like every other
+                // JSX-children site; otherwise its body parses as JSX and a close
+                // tag in a template literal (`` `</article>` ``) becomes a stray error.
+                if self.cur_src() == "script" {
+                    children.push(self.parse_astro_script_in_jsx(child_span));
+                } else {
+                    let element = self.parse_astro_jsx_element(child_span, false);
+                    children.push(JSXChild::Element(element));
+                }
+            } else if kind == Kind::Bang
+                && let Some(comment) = self.parse_html_comment_in_jsx(child_span)
+            {
+                // HTML comment in a sibling run. The comment parser leaves the lexer
+                // in JSX-child mode, but this loop is JS-expression context. Resync to
+                // JS tokens so the closing `)` ends the list instead of being read as text.
+                self.push_astro_inter_sibling_whitespace(&mut children, ws_start, child_span);
+                let comment_end = comment.span().end;
+                self.lexer.set_position_for_astro(comment_end);
+                self.token = self.lexer.next_token();
+                // Resync bypasses the parser's bump bookkeeping; point `prev_token_end`
+                // at the comment end so the next iteration captures the whitespace
+                // between the comment and the following sibling.
+                self.prev_token_end = comment_end;
+                children.push(comment);
             } else {
                 self.rewind(checkpoint);
                 break;
@@ -532,6 +574,27 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let closing = self.ast.jsx_closing_fragment(Span::empty(self.prev_token_end));
         let fragment = self.ast.alloc_jsx_fragment(fragment_span, opening, children, closing);
         Expression::JSXFragment(fragment)
+    }
+
+    /// Push the source text in `[start, end)` as a `JSXText` child when it is
+    /// non-empty whitespace. Used to preserve whitespace between bare JSX
+    /// siblings in an expression, which the JS lexer would otherwise drop.
+    fn push_astro_inter_sibling_whitespace(
+        &self,
+        children: &mut Vec<'a, JSXChild<'a>>,
+        start: u32,
+        end: u32,
+    ) {
+        if end <= start {
+            return;
+        }
+        let span = Span::new(start, end);
+        let ws = span.source_text(self.source_text);
+        if !ws.bytes().all(|b| b.is_ascii_whitespace()) {
+            return;
+        }
+        let text = self.ast.alloc_jsx_text(span, Atom::from(ws), Some(Atom::from(ws)));
+        children.push(JSXChild::Text(text));
     }
 
     // ==================== Astro-specific helpers ====================
@@ -576,7 +639,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let expr_start = self.cur_token().span().start;
         let expr = self.parse_expr();
-        let name_span = Span::new(expr_start, self.prev_token_end);
+        // `parse_expr` can fail without advancing (e.g. the next token is `)`),
+        // leaving `prev_token_end < expr_start`. Clamp so the name span is never
+        // inverted; `source_text()` panics on an inverted span.
+        let name_span = Span::new(expr_start, self.prev_token_end.max(expr_start));
         self.expect(Kind::RCurly);
 
         let name = Atom::from(name_span.source_text(self.source_text).trim());
@@ -1092,10 +1158,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     pub(crate) fn parse_html_comment_in_jsx(&mut self, span: u32) -> Option<JSXChild<'a>> {
         let start_pos = self.prev_token_end as usize;
 
+        // Search for the closing `-->` *after* the opening `!--` (offset >= 3).
+        // Otherwise an overlapping marker like `<!-->` would match `-->` at
+        // offset 1 and slice `rest[3..1]`, panicking the parser on malformed input.
         if let Some(rest) = self.source_text.get(start_pos..)
             && rest.starts_with("!--")
-            && let Some(end_offset) = rest.find("-->")
+            && let Some(rel) = rest[3..].find("-->")
         {
+            let end_offset = rel + 3;
             let comment_end = (start_pos + end_offset + 3) as u32;
             let comment_start = span;
 
