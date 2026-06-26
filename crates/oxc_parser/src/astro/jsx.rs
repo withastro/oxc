@@ -688,11 +688,13 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         while matches!(bytes.get(value_start), Some(b' ' | b'\t' | b'\r' | b'\n')) {
             value_start += 1;
         }
-        // A structural terminator (`/`, `>`, `}`, EOF) means the value is missing
-        // (`attr=` before `/>`); fall through to the JS path to report it there.
+        // A structural terminator (`>`, `}`, EOF) means the value is missing
+        // (`attr=` before `>`); fall through to the JS path to report it there.
+        // `/` is a valid first value char (HTML5): `href=/about` is value `/about`,
+        // and even `attr=/>` is value `/`, not a self-close.
         let is_unquoted = bytes
             .get(value_start)
-            .is_some_and(|b| !matches!(b, b'"' | b'\'' | b'{' | b'`' | b'<' | b'/' | b'>' | b'}'));
+            .is_some_and(|b| !matches!(b, b'"' | b'\'' | b'{' | b'`' | b'<' | b'>' | b'}'));
 
         if is_unquoted {
             self.prev_token_end = self.cur_token().end(); // consume `=`

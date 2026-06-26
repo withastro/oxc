@@ -43,12 +43,17 @@ mod astro_jsx {
         b'=' | b'>' | b'/' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'<'
     ));
 
-    /// Per HTML spec, unquoted attribute values cannot contain whitespace, `"`,
-    /// `'`, `=`, `<`, `>`, or backtick. We additionally stop at `/`, `{`, and
-    /// `}` so JSX self-closing tags and Astro expressions remain parseable.
+    /// An unquoted attribute value ends only at HTML5's terminators — whitespace
+    /// or `>` — plus the Astro-structural characters `{`/`}` (an expression
+    /// starts/ends) and `<` (a following tag). Everything else is an ordinary
+    /// value character, matching the HTML tokenizer, which flags `"`, `'`, `=`,
+    /// and backtick as a parse error but still appends them. So `href=a=b` and
+    /// `href=https://example.com/x` parse whole; the printer escapes any quotes
+    /// or backticks when emitting the value. The `/` self-close form
+    /// (`<img src=x />`) still works because the space ends the value first.
     static ASTRO_UNQUOTED_ATTR_VALUE_END_TABLE: SafeByteMatchTable = safe_byte_match_table!(|b| matches!(
         b,
-        b'=' | b'>' | b'/' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'<' | b'"' | b'\'' | b'`'
+        b'>' | b'{' | b'}' | b' ' | b'\t' | b'\n' | b'\r' | b'<'
     ));
 
     /// Astro/HTML text content can include `>` as literal text (unlike JSX).
