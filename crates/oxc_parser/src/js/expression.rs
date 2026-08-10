@@ -1220,6 +1220,19 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // This is needed for jsx `<div>=</div>` case
             let kind = self.re_lex_right_angle();
 
+            // Astro: Multiple JSX elements without explicit fragment.
+            // When LHS is a JSX element/fragment and we see `<`, check if it's
+            // another JSX element (not a comparison operator).
+            #[cfg(feature = "astro")]
+            if self.source_type.is_astro()
+                && kind == Kind::LAngle
+                && matches!(lhs, Expression::JSXElement(_) | Expression::JSXFragment(_))
+                && self.is_astro_jsx_after_lt()
+            {
+                lhs = self.parse_astro_multiple_jsx_in_expression(lhs_span, lhs);
+                continue;
+            }
+
             let Some(left_precedence) = kind_to_precedence(kind) else { break };
 
             let stop = if left_precedence.is_right_associative() {

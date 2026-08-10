@@ -3,6 +3,7 @@
 
 use oxc_allocator::UnstableAddress;
 
+use crate::ast::astro::*;
 use crate::ast::js::*;
 use crate::ast::jsx::*;
 use crate::ast::literal::*;
@@ -383,3 +384,13 @@ impl UnstableAddress for JSDocNullableType<'_> {}
 impl UnstableAddress for JSDocNonNullableType<'_> {}
 
 impl UnstableAddress for JSDocUnknownType {}
+
+impl UnstableAddress for AstroRoot<'_> {}
+
+impl UnstableAddress for AstroFrontmatter<'_> {}
+
+impl UnstableAddress for AstroScript<'_> {}
+
+impl UnstableAddress for AstroDoctype<'_> {}
+
+impl UnstableAddress for AstroComment<'_> {}

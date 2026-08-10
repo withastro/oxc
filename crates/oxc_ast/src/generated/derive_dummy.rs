@@ -7,6 +7,7 @@ use std::cell::Cell;
 
 use oxc_allocator::{Allocator, Dummy};
 
+use crate::ast::astro::*;
 use crate::ast::js::*;
 use crate::ast::jsx::*;
 use crate::ast::literal::*;
@@ -2046,9 +2047,9 @@ impl<'a> Dummy<'a> for JSXIdentifier<'a> {
 impl<'a> Dummy<'a> for JSXChild<'a> {
     /// Create a dummy [`JSXChild`].
     ///
-    /// Has cost of making 1 allocation (40 bytes).
+    /// Has cost of making 1 allocation (24 bytes).
     fn dummy(allocator: &'a Allocator) -> Self {
-        Self::ExpressionContainer(Dummy::dummy(allocator))
+        Self::AstroDoctype(Dummy::dummy(allocator))
     }
 }
 
@@ -3226,5 +3227,54 @@ impl<'a> Dummy<'a> for JSDocUnknownType {
     /// Does not allocate any data into arena.
     fn dummy(allocator: &'a Allocator) -> Self {
         Self { node_id: Cell::new(oxc_syntax::node::NodeId::DUMMY), span: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroRoot<'a> {
+    /// Create a dummy [`AstroRoot`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self {
+            span: Dummy::dummy(allocator),
+            frontmatter: Dummy::dummy(allocator),
+            body: Dummy::dummy(allocator),
+        }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroFrontmatter<'a> {
+    /// Create a dummy [`AstroFrontmatter`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroScript<'a> {
+    /// Create a dummy [`AstroScript`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), program: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroDoctype<'a> {
+    /// Create a dummy [`AstroDoctype`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
+    }
+}
+
+impl<'a> Dummy<'a> for AstroComment<'a> {
+    /// Create a dummy [`AstroComment`].
+    ///
+    /// Does not allocate any data into arena.
+    fn dummy(allocator: &'a Allocator) -> Self {
+        Self { span: Dummy::dummy(allocator), value: Dummy::dummy(allocator) }
     }
 }

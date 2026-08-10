@@ -118,4 +118,15 @@ impl<'a> UnresolvedReferencesStack<'a> {
         // creating an iterator just to get the first element.
         self.stack.swap_remove(0)
     }
+
+    /// Get mutable reference to the global/root scope's unresolved references (index 0).
+    /// Used for Astro script isolation where unresolved references should bypass
+    /// intermediate scopes and go directly to the root.
+    #[cfg(feature = "astro")]
+    #[inline]
+    pub(crate) fn root_mut(&mut self) -> &mut TempUnresolvedReferences<'a> {
+        // SAFETY: Stack starts with size >= INITIAL_SIZE (16) and never shrinks.
+        // Index 0 (global scope) is always valid.
+        unsafe { self.stack.get_unchecked_mut(0) }
+    }
 }

@@ -57,6 +57,9 @@ const {
 })
 export default __napiModule.exports
 export const Severity = __napiModule.exports.Severity
+export const AstroCompileResult = __napiModule.exports.AstroCompileResult
+export const compileAstro = __napiModule.exports.compileAstro
+export const compileAstroSync = __napiModule.exports.compileAstroSync
 export const HelperMode = __napiModule.exports.HelperMode
 export const isolatedDeclaration = __napiModule.exports.isolatedDeclaration
 export const isolatedDeclarationSync = __napiModule.exports.isolatedDeclarationSync

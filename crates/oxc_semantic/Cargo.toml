@@ -45,7 +45,9 @@ rustc-hash = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
-default = []
+default = ["astro"]
+# Support for semantic analysis of Astro files (.astro)
+astro = []
 cfg = ["dep:oxc_cfg"]
 jsdoc = ["dep:oxc_jsdoc"]
 linter = ["jsdoc"]

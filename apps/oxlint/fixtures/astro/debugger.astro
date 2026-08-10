@@ -1,4 +1,5 @@
 ---
+// eslint-disable-next-line no-debugger
 debugger
 ---
 
@@ -16,5 +17,18 @@ debugger
 </script>
 
 <script>
+  // eslint-disable-next-line no-debugger
   debugger
 </script>
+
+{
+  /* eslint-disable-next-line no-console */
+  console.log("suppressed in expression container")
+}
+
+<div
+  id={
+    // eslint-disable-next-line no-console
+    console.log("suppressed in attribute")
+  }
+></div>

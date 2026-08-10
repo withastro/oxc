@@ -323,6 +323,10 @@ pub(crate) enum AncestorType {
     TSInstantiationExpressionTypeArguments = 299,
     JSDocNullableTypeTypeAnnotation = 300,
     JSDocNonNullableTypeTypeAnnotation = 301,
+    AstroRootFrontmatter = 302,
+    AstroRootBody = 303,
+    AstroFrontmatterProgram = 304,
+    AstroScriptProgram = 305,
 }
 
 /// Ancestor type used in AST traversal.
@@ -907,6 +911,12 @@ pub enum Ancestor<'a, 't> {
         AncestorType::JSDocNullableTypeTypeAnnotation as u16,
     JSDocNonNullableTypeTypeAnnotation(JSDocNonNullableTypeWithoutTypeAnnotation<'a, 't>) =
         AncestorType::JSDocNonNullableTypeTypeAnnotation as u16,
+    AstroRootFrontmatter(AstroRootWithoutFrontmatter<'a, 't>) =
+        AncestorType::AstroRootFrontmatter as u16,
+    AstroRootBody(AstroRootWithoutBody<'a, 't>) = AncestorType::AstroRootBody as u16,
+    AstroFrontmatterProgram(AstroFrontmatterWithoutProgram<'a, 't>) =
+        AncestorType::AstroFrontmatterProgram as u16,
+    AstroScriptProgram(AstroScriptWithoutProgram<'a, 't>) = AncestorType::AstroScriptProgram as u16,
 }
 
 impl<'a, 't> Ancestor<'a, 't> {
@@ -1906,6 +1916,21 @@ impl<'a, 't> Ancestor<'a, 't> {
     }
 
     #[inline]
+    pub fn is_astro_root(self) -> bool {
+        matches!(self, Self::AstroRootFrontmatter(_) | Self::AstroRootBody(_))
+    }
+
+    #[inline]
+    pub fn is_astro_frontmatter(self) -> bool {
+        matches!(self, Self::AstroFrontmatterProgram(_))
+    }
+
+    #[inline]
+    pub fn is_astro_script(self) -> bool {
+        matches!(self, Self::AstroScriptProgram(_))
+    }
+
+    #[inline]
     pub fn is_parent_of_statement(self) -> bool {
         matches!(
             self,
@@ -2123,7 +2148,10 @@ impl<'a, 't> Ancestor<'a, 't> {
 
     #[inline]
     pub fn is_parent_of_jsx_child(self) -> bool {
-        matches!(self, Self::JSXElementChildren(_) | Self::JSXFragmentChildren(_))
+        matches!(
+            self,
+            Self::JSXElementChildren(_) | Self::JSXFragmentChildren(_) | Self::AstroRootBody(_)
+        )
     }
 
     #[inline]
@@ -2559,6 +2587,10 @@ impl<'a, 't> GetAddress for Ancestor<'a, 't> {
             Self::TSInstantiationExpressionTypeArguments(a) => a.address(),
             Self::JSDocNullableTypeTypeAnnotation(a) => a.address(),
             Self::JSDocNonNullableTypeTypeAnnotation(a) => a.address(),
+            Self::AstroRootFrontmatter(a) => a.address(),
+            Self::AstroRootBody(a) => a.address(),
+            Self::AstroFrontmatterProgram(a) => a.address(),
+            Self::AstroScriptProgram(a) => a.address(),
         }
     }
 }
@@ -18564,6 +18596,115 @@ impl<'a, 't> JSDocNonNullableTypeWithoutTypeAnnotation<'a, 't> {
 }
 
 impl<'a, 't> GetAddress for JSDocNonNullableTypeWithoutTypeAnnotation<'a, 't> {
+    #[inline]
+    fn address(&self) -> Address {
+        unsafe { Address::from_ptr(self.0) }
+    }
+}
+
+pub(crate) const OFFSET_ASTRO_ROOT_SPAN: usize = offset_of!(AstroRoot, span);
+pub(crate) const OFFSET_ASTRO_ROOT_FRONTMATTER: usize = offset_of!(AstroRoot, frontmatter);
+pub(crate) const OFFSET_ASTRO_ROOT_BODY: usize = offset_of!(AstroRoot, body);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct AstroRootWithoutFrontmatter<'a, 't>(
+    pub(crate) *const AstroRoot<'a>,
+    pub(crate) PhantomData<&'t ()>,
+);
+
+impl<'a, 't> AstroRootWithoutFrontmatter<'a, 't> {
+    #[inline]
+    pub fn span(self) -> &'t Span {
+        unsafe { &*((self.0 as *const u8).add(OFFSET_ASTRO_ROOT_SPAN) as *const Span) }
+    }
+
+    #[inline]
+    pub fn body(self) -> &'t Vec<'a, JSXChild<'a>> {
+        unsafe {
+            &*((self.0 as *const u8).add(OFFSET_ASTRO_ROOT_BODY) as *const Vec<'a, JSXChild<'a>>)
+        }
+    }
+}
+
+impl<'a, 't> GetAddress for AstroRootWithoutFrontmatter<'a, 't> {
+    #[inline]
+    fn address(&self) -> Address {
+        unsafe { Address::from_ptr(self.0) }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct AstroRootWithoutBody<'a, 't>(
+    pub(crate) *const AstroRoot<'a>,
+    pub(crate) PhantomData<&'t ()>,
+);
+
+impl<'a, 't> AstroRootWithoutBody<'a, 't> {
+    #[inline]
+    pub fn span(self) -> &'t Span {
+        unsafe { &*((self.0 as *const u8).add(OFFSET_ASTRO_ROOT_SPAN) as *const Span) }
+    }
+
+    #[inline]
+    pub fn frontmatter(self) -> &'t Option<Box<'a, AstroFrontmatter<'a>>> {
+        unsafe {
+            &*((self.0 as *const u8).add(OFFSET_ASTRO_ROOT_FRONTMATTER)
+                as *const Option<Box<'a, AstroFrontmatter<'a>>>)
+        }
+    }
+}
+
+impl<'a, 't> GetAddress for AstroRootWithoutBody<'a, 't> {
+    #[inline]
+    fn address(&self) -> Address {
+        unsafe { Address::from_ptr(self.0) }
+    }
+}
+
+pub(crate) const OFFSET_ASTRO_FRONTMATTER_SPAN: usize = offset_of!(AstroFrontmatter, span);
+pub(crate) const OFFSET_ASTRO_FRONTMATTER_PROGRAM: usize = offset_of!(AstroFrontmatter, program);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct AstroFrontmatterWithoutProgram<'a, 't>(
+    pub(crate) *const AstroFrontmatter<'a>,
+    pub(crate) PhantomData<&'t ()>,
+);
+
+impl<'a, 't> AstroFrontmatterWithoutProgram<'a, 't> {
+    #[inline]
+    pub fn span(self) -> &'t Span {
+        unsafe { &*((self.0 as *const u8).add(OFFSET_ASTRO_FRONTMATTER_SPAN) as *const Span) }
+    }
+}
+
+impl<'a, 't> GetAddress for AstroFrontmatterWithoutProgram<'a, 't> {
+    #[inline]
+    fn address(&self) -> Address {
+        unsafe { Address::from_ptr(self.0) }
+    }
+}
+
+pub(crate) const OFFSET_ASTRO_SCRIPT_SPAN: usize = offset_of!(AstroScript, span);
+pub(crate) const OFFSET_ASTRO_SCRIPT_PROGRAM: usize = offset_of!(AstroScript, program);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct AstroScriptWithoutProgram<'a, 't>(
+    pub(crate) *const AstroScript<'a>,
+    pub(crate) PhantomData<&'t ()>,
+);
+
+impl<'a, 't> AstroScriptWithoutProgram<'a, 't> {
+    #[inline]
+    pub fn span(self) -> &'t Span {
+        unsafe { &*((self.0 as *const u8).add(OFFSET_ASTRO_SCRIPT_SPAN) as *const Span) }
+    }
+}
+
+impl<'a, 't> GetAddress for AstroScriptWithoutProgram<'a, 't> {
     #[inline]
     fn address(&self) -> Address {
         unsafe { Address::from_ptr(self.0) }

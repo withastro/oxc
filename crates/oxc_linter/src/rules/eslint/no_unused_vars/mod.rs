@@ -79,11 +79,16 @@ declare_oxc_lint!(
     /// functions, etc.
     ///
     /// #### Ignored Files
-    /// This rule ignores `.d.ts`, `.astro`, `.svelte` and `.vue` files entirely. Variables,
+    /// This rule ignores `.d.ts`, `.svelte` and `.vue` files entirely. Variables,
     /// classes, interfaces, and types declared in `.d.ts` files are generally
     /// used by other files, which are not checked by Oxlint. Since Oxlint does
     /// not support parsing template syntax, this rule cannot tell if a variable
-    /// is used or unused in a Vue / Svelte / Astro file.
+    /// is used or unused in a Vue or Svelte file.
+    ///
+    /// For `.astro` files, this rule runs normally since Oxlint fully parses Astro
+    /// files (frontmatter and template together). One exception: a `Props` interface
+    /// or type alias is considered used whenever `Astro.props` appears in the file,
+    /// because the Astro runtime implicitly types `Astro.props` with `Props`.
     ///
     /// #### Exported
     ///
@@ -219,14 +224,12 @@ impl Rule for NoUnusedVars {
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
-        // ignore .d.ts and vue/svelte/astro files.
+        // ignore .d.ts and vue/svelte files.
         // 1. declarations have side effects (they get merged together)
-        // 2. vue/svelte/astro scripts declare variables that get used in the template, which
+        // 2. vue/svelte scripts declare variables that get used in the template, which
         //    we can't detect
         !ctx.source_type().is_typescript_definition()
-            && !ctx
-                .file_extension()
-                .is_some_and(|ext| ext == "vue" || ext == "svelte" || ext == "astro")
+            && !ctx.file_extension().is_some_and(|ext| ext == "vue" || ext == "svelte")
     }
 }
 
@@ -329,6 +332,15 @@ impl NoUnusedVars {
             }
             AstKind::TSInterfaceDeclaration(_) | AstKind::TSTypeAliasDeclaration(_) => {
                 if symbol.is_in_declared_module() {
+                    return;
+                }
+                // In Astro files, a type or interface named `Props` is implicitly used by the
+                // Astro runtime whenever `Astro.props` is accessed in the frontmatter or
+                // template. Suppress the unused warning when `Astro.props` appears in the file.
+                if ctx.file_extension().is_some_and(|ext| ext == "astro")
+                    && symbol.name() == "Props"
+                    && ctx.semantic().source_text().contains("Astro.props")
+                {
                     return;
                 }
                 ctx.diagnostic(diagnostic::declared(symbol, &IgnorePattern::<&str>::None, false));
