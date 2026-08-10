@@ -1268,6 +1268,82 @@ const name = "World";
         }
     }
 
+    #[test]
+    fn parse_astro_attribute_shorthand_spans() {
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Component {prop} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXAttributeItem::Attribute(attr) = &element.opening_element.attributes[0] else {
+            panic!("Expected Attribute, got SpreadAttribute");
+        };
+        let JSXAttributeName::Identifier(name) = &attr.name else {
+            panic!("expected ident name");
+        };
+        let Some(JSXAttributeValue::ExpressionContainer(container)) = &attr.value else {
+            panic!("expected expression container value");
+        };
+
+        assert_eq!(attr.span.source_text(source), "{prop}");
+        assert_eq!(container.span.source_text(source), "{prop}");
+        assert_eq!(name.span.source_text(source), "prop");
+    }
+
+    /// Shorthand is desugared away, so this span relationship is all consumers have to detect it.
+    #[test]
+    fn parse_astro_attribute_shorthand_is_distinguishable_by_span() {
+        let shorthand =
+            ["<C {prop} />", "<C   {prop}   />", "<C {{ a: 1 }} />", "<C {obj?.prop} />"];
+        let longhand = [
+            "<C class=\"a\" />",
+            "<C    class=\"a\" />",
+            "<C\n  class=\"a\"\n/>",
+            "<C client:load />",
+            "<C a:b=\"c\" />",
+            "<C disabled />",
+            "<C x={y} />",
+            "<C x=`y` />",
+        ];
+
+        for (source, expected) in
+            shorthand.iter().map(|s| (s, true)).chain(longhand.iter().map(|s| (s, false)))
+        {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+
+            let JSXChild::Element(element) = &ret.root.body[0] else {
+                panic!("{source:?}: expected JSXChild::Element");
+            };
+            let JSXAttributeItem::Attribute(attr) = &element.opening_element.attributes[0] else {
+                panic!("{source:?}: expected Attribute");
+            };
+            let JSXAttributeName::Identifier(name) = &attr.name else {
+                panic!("{source:?}: expected ident name");
+            };
+
+            assert_eq!(
+                attr.span.start < name.span.start,
+                expected,
+                "{source:?}: attribute span {:?} vs name span {:?}",
+                attr.span,
+                name.span
+            );
+            if expected {
+                assert_eq!(&source[attr.span.start as usize..][..1], "{", "{source:?}");
+            }
+        }
+    }
+
     // A non-identifier `{expr}` is a shorthand whose name is the expression source text.
     #[test]
     fn parse_astro_attribute_shorthand_object_expression() {
