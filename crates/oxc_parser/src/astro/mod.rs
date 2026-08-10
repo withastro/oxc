@@ -314,7 +314,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
-            && let Some(end_offset) = rest.find(closing_tag)
+            && let Some(end_offset) = jsx::find_raw_text_content_end(rest, closing_tag)
         {
             let content_end = content_start + end_offset;
 
@@ -1295,6 +1295,41 @@ const name = "World";
         assert_eq!(attr.span.source_text(source), "{prop}");
         assert_eq!(container.span.source_text(source), "{prop}");
         assert_eq!(name.span.source_text(source), "prop");
+    }
+
+    /// `</tag` only closes a raw text element when followed by whitespace, `/` or `>`.
+    #[test]
+    fn parse_astro_raw_text_element_ignores_lookalike_end_tags() {
+        let lookalikes = [
+            "<style>h1 { color: red } /* </style-ish */</style>",
+            "<style>h1 { color: red } /* </styleX */</style>",
+            r#"<script>const s = "</script-ish";</script>"#,
+            r#"<script type="application/json">{"a": "</script-ish"}</script>"#,
+            "<div is:raw>a </div-x b</div>",
+        ];
+        for source in lookalikes {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+        }
+    }
+
+    #[test]
+    fn parse_astro_raw_text_element_closes_on_real_end_tags() {
+        let closing = [
+            "<style>h1 { color: red }</style>",
+            "<style>h1 { color: red }</style >",
+            "<script>const a = 1;</script>",
+            "<div is:raw>a</div>",
+        ];
+        for source in closing {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+            assert_eq!(ret.root.body.len(), 1, "{source:?}: expected a single element");
+        }
     }
 
     /// Shorthand is desugared away, so this span relationship is all consumers have to detect it.
