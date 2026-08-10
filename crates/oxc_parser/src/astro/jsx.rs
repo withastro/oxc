@@ -1026,7 +1026,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
-            && let Some(end_offset) = rest.find(closing_tag)
+            && let Some(end_offset) = find_raw_text_content_end(rest, closing_tag)
         {
             let content_end = content_start + end_offset;
 
@@ -1177,7 +1177,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let start_pos = self.prev_token_end as usize;
         if let Some(rest) = self.source_text.get(start_pos..)
-            && let Some(end_pos) = rest.find(&closing_tag)
+            && let Some(end_pos) = find_raw_text_content_end(rest, &closing_tag)
         {
             #[expect(clippy::cast_possible_truncation)]
             let content_end = (start_pos + end_pos) as u32;
@@ -1221,7 +1221,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let start_pos = self.prev_token_end as usize;
         // Without a closing tag there is no content to delimit; fall back like raw text.
-        if self.source_text.get(start_pos..).and_then(|rest| rest.find(&closing_tag)).is_none() {
+        if self
+            .source_text
+            .get(start_pos..)
+            .and_then(|rest| find_raw_text_content_end(rest, &closing_tag))
+            .is_none()
+        {
             return self.ast.vec();
         }
 
@@ -1230,7 +1235,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let content_end = loop {
             let rest = &self.source_text[pos..];
-            let Some(close_rel) = rest.find(&closing_tag) else { break pos };
+            let Some(close_rel) = find_raw_text_content_end(rest, &closing_tag) else { break pos };
             let Some(brace_rel) = rest.find('{').filter(|brace| *brace < close_rel) else {
                 break pos + close_rel;
             };
@@ -1433,4 +1438,21 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let fragment = self.ast.alloc_jsx_fragment(fragment_span, opening, children, closing);
         JSXExpression::JSXFragment(fragment)
     }
+}
+
+/// HTML5 ends a raw text element only when `</tag` is followed by whitespace, `/` or `>`.
+pub(super) fn find_raw_text_content_end(rest: &str, closing_tag: &str) -> Option<usize> {
+    let mut searched = 0;
+    while let Some(found) = rest[searched..].find(closing_tag) {
+        let at = searched + found;
+        let after = at + closing_tag.len();
+        match rest.as_bytes().get(after) {
+            None => return Some(at),
+            Some(byte) if byte.is_ascii_whitespace() || *byte == b'/' || *byte == b'>' => {
+                return Some(at);
+            }
+            _ => searched = after,
+        }
+    }
+    None
 }
