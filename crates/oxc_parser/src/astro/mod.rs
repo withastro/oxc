@@ -1268,6 +1268,35 @@ const name = "World";
         }
     }
 
+    #[test]
+    fn parse_astro_attribute_shorthand_spans() {
+        use oxc_ast::ast::JSXAttributeValue;
+
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Component {prop} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXAttributeItem::Attribute(attr) = &element.opening_element.attributes[0] else {
+            panic!("Expected Attribute, got SpreadAttribute");
+        };
+        let JSXAttributeName::Identifier(name) = &attr.name else {
+            panic!("expected ident name");
+        };
+        let Some(JSXAttributeValue::ExpressionContainer(container)) = &attr.value else {
+            panic!("expected expression container value");
+        };
+
+        assert_eq!(attr.span.source_text(source), "{prop}");
+        assert_eq!(container.span.source_text(source), "{prop}");
+        assert_eq!(name.span.source_text(source), "prop");
+    }
+
     // A non-identifier `{expr}` is a shorthand whose name is the expression source text.
     #[test]
     fn parse_astro_attribute_shorthand_object_expression() {

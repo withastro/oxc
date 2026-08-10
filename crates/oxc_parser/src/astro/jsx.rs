@@ -602,16 +602,18 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Try to parse Astro shorthand attribute `{prop}` -> `prop={prop}`
     fn try_parse_astro_shorthand_attribute(&mut self) -> Option<Box<'a, JSXAttribute<'a>>> {
         let checkpoint = self.checkpoint();
+        let attr_span = self.start_span();
         self.bump_any(); // bump `{`
 
         if self.at(Kind::Ident) || self.cur_kind().is_any_keyword() {
             let ident_span = self.start_span();
             let name = self.cur_src();
             self.bump_any();
+            let ident_span = self.end_span(ident_span);
 
             if self.at(Kind::RCurly) {
                 self.bump_any(); // bump `}`
-                let ident_span = self.end_span(ident_span);
+                let attr_span = self.end_span(attr_span);
                 let name = Atom::from(name);
                 let identifier = self.ast.jsx_identifier(ident_span, name);
                 let attr_name = JSXAttributeName::Identifier(self.alloc(identifier));
@@ -619,10 +621,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 let ident_ref = self.ast.identifier_reference(ident_span, name);
                 let expr = Expression::Identifier(self.alloc(ident_ref));
                 let expr_container =
-                    self.ast.alloc_jsx_expression_container(ident_span, JSXExpression::from(expr));
+                    self.ast.alloc_jsx_expression_container(attr_span, JSXExpression::from(expr));
                 let value = JSXAttributeValue::ExpressionContainer(expr_container);
 
-                return Some(self.ast.alloc_jsx_attribute(ident_span, attr_name, Some(value)));
+                return Some(self.ast.alloc_jsx_attribute(attr_span, attr_name, Some(value)));
             }
         }
 
