@@ -116,6 +116,11 @@ pub struct Lexer<'a, C: Config> {
     #[cfg(feature = "astro")]
     pub(crate) no_expression_in_jsx_children: bool,
 
+    /// How many expression containers are open around the current JSX child position.
+    /// A `}` closes a container only when one is open; otherwise it is ordinary text.
+    #[cfg(feature = "astro")]
+    pub(crate) astro_jsx_expression_depth: u32,
+
     /// Collected tokens in source order.
     tokens: ArenaVec<'a, Token>,
 
@@ -167,6 +172,8 @@ impl<'a, C: Config> Lexer<'a, C> {
             multi_line_comment_end_finder: None,
             #[cfg(feature = "astro")]
             no_expression_in_jsx_children: false,
+            #[cfg(feature = "astro")]
+            astro_jsx_expression_depth: 0,
             tokens,
             config,
         }

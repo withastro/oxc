@@ -62,6 +62,11 @@ mod astro_jsx {
     static ASTRO_TEXT_END_TABLE: SafeByteMatchTable =
         safe_byte_match_table!(|b| b == b'{' || b == b'}' || b == b'<');
 
+    /// As `ASTRO_TEXT_END_TABLE`, but for text with no expression container open
+    /// around it, where `}` closes nothing and is therefore ordinary text.
+    static ASTRO_TEXT_NO_OPEN_EXPRESSION_END_TABLE: SafeByteMatchTable =
+        safe_byte_match_table!(|b| b == b'{' || b == b'<');
+
     /// Text content inside foreign content elements like `<math>`.
     /// In foreign content, `{` and `}` are literal text, not expression delimiters.
     /// Only `<` stops text scanning (for child tags like `<mi>`, `<mo>`, etc.).
@@ -109,8 +114,11 @@ mod astro_jsx {
                     if self.no_expression_in_jsx_children {
                         // In foreign content, `}` is literal text
                         self.read_jsx_child_foreign_text()
+                    } else if self.astro_jsx_expression_depth == 0 {
+                        // No container to close, so this `}` is the first byte of a text run.
+                        self.read_jsx_child_text()
                     } else {
-                        // Outside foreign content, `}` ends an expression container
+                        // Inside an expression container, `}` ends it
                         // (e.g. `{ <!-- comment --> text }` — the `}` closes `{`).
                         self.consume_char();
                         Kind::RCurly
@@ -123,29 +131,40 @@ mod astro_jsx {
                         return self.read_jsx_child_foreign_text();
                     }
 
-                    // In Astro mode, `>` is valid text content (unlike JSX where it's an error).
-                    // Use a more permissive table that doesn't stop at `>`.
-                    let text_start = self.offset();
-                    let _next_byte = byte_search! {
-                        lexer: self,
-                        table: ASTRO_TEXT_END_TABLE,
-                        handle_eof: {
-                            // In Astro, reaching EOF while scanning text means we have text content
-                            // Return JSXText if we actually scanned any text, otherwise Eof
-                            return if self.offset() > text_start {
-                                Kind::JSXText
-                            } else {
-                                Kind::Eof
-                            };
-                        },
-                    };
-                    // `<`, `{`, and `}` are all valid stopping points.
-                    // - `<` / `{`: start of tag / expression — return JSXText for text so far.
-                    // - `}`:  end of expression container — return JSXText; `}` stays unconsumed
-                    //   and the next `next_jsx_child()` call will return `RCurly`.
-                    Kind::JSXText
+                    self.read_jsx_child_text()
                 }
                 None => Kind::Eof,
+            }
+        }
+
+        /// Scan to the byte that ends a run of Astro child text, or `None` at EOF.
+        ///
+        /// In Astro mode, `>` is valid text content (unlike JSX where it's an error), so
+        /// neither table stops at it. `}` ends the run only when there is an expression
+        /// container open for it to close; it then stays unconsumed and the next
+        /// `next_jsx_child()` call returns `RCurly`.
+        fn scan_astro_text_end(&mut self) -> Option<u8> {
+            if self.astro_jsx_expression_depth == 0 {
+                Some(byte_search! {
+                    lexer: self,
+                    table: ASTRO_TEXT_NO_OPEN_EXPRESSION_END_TABLE,
+                    handle_eof: { return None },
+                })
+            } else {
+                Some(byte_search! {
+                    lexer: self,
+                    table: ASTRO_TEXT_END_TABLE,
+                    handle_eof: { return None },
+                })
+            }
+        }
+
+        /// Read a run of Astro JSX child text from the current position.
+        fn read_jsx_child_text(&mut self) -> Kind {
+            let text_start = self.offset();
+            match self.scan_astro_text_end() {
+                None if self.offset() == text_start => Kind::Eof,
+                _ => Kind::JSXText,
             }
         }
 
@@ -156,32 +175,25 @@ mod astro_jsx {
             // Consume the `<` that we already peeked
             self.consume_char();
 
-            // In Astro/HTML, `>` is valid text content (unlike JSX where it's an error).
-            // We only stop at `<` (potential tag) or `{` (expression start).
-            let next_byte = byte_search! {
-                lexer: self,
-                table: ASTRO_TEXT_END_TABLE,
-                handle_eof: {
+            loop {
+                let Some(next_byte) = self.scan_astro_text_end() else {
                     return Kind::JSXText;
-                },
-            };
-
-            // We found `<` or `{`.
-            // For `<`, we need to check if it's a valid tag start.
-            if next_byte == b'<' {
-                // Check if this new `<` is a valid tag start
-                if let Some([_, next]) = self.peek_2_bytes() {
-                    // Per HTML spec: only ASCII letters start tag names
-                    let is_valid_tag_start =
-                        next.is_ascii_alphabetic() || next == b'/' || next == b'>' || next == b'!';
-                    if !is_valid_tag_start {
-                        // Still not a valid tag - recursively continue reading text
-                        return self.read_jsx_child_text_starting_with_lt();
-                    }
+                };
+                if next_byte != b'<' {
+                    return Kind::JSXText;
                 }
+                let Some([_, next]) = self.peek_2_bytes() else {
+                    return Kind::JSXText;
+                };
+                // Per HTML spec: only ASCII letters start tag names
+                let is_valid_tag_start =
+                    next.is_ascii_alphabetic() || next == b'/' || next == b'>' || next == b'!';
+                if is_valid_tag_start {
+                    return Kind::JSXText;
+                }
+                // Still not a tag — the `<` is more text
+                self.consume_char();
             }
-            // Either `{` or a valid tag start `<` - return JSXText
-            Kind::JSXText
         }
 
         /// Read JSX child text inside foreign content (e.g., `<math>`).
