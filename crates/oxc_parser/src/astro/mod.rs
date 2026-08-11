@@ -1405,6 +1405,30 @@ const name = "World";
         assert_eq!(name.span.source_text(source), "prop");
     }
 
+    // Comments inside the braces must not drag the name span across them.
+    #[test]
+    fn parse_astro_attribute_shorthand_with_comments_spans() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = r"<Component {/* c1 */ prop /* c2 */} />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXAttributeItem::Attribute(attr) = &element.opening_element.attributes[0] else {
+            panic!("Expected Attribute, got SpreadAttribute");
+        };
+        let JSXAttributeName::Identifier(name) = &attr.name else {
+            panic!("expected ident name");
+        };
+
+        assert_eq!(attr.span.source_text(source), "{/* c1 */ prop /* c2 */}");
+        assert_eq!(name.span.source_text(source), "prop");
+    }
+
     /// Shorthand is desugared away, so this span relationship is all consumers have to detect it.
     #[test]
     fn parse_astro_attribute_shorthand_is_distinguishable_by_span() {
