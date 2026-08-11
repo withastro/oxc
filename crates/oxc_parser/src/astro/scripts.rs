@@ -46,8 +46,8 @@ fn parse_scripts_in_child<'a>(
                 let padding = " ".repeat(content_span.start as usize);
                 let padded_source = allocator.alloc_str(&format!("{padding}{script_content}"));
 
-                let ts_source_type =
-                    SourceType::ts().with_module(true).with_jsx(source_type.is_jsx());
+                // TS, not TSX: `<T>expr` in a bare `<script>` is a type assertion, not a tag.
+                let ts_source_type = SourceType::ts().with_module(true);
 
                 // Create a new parser for the script content
                 let unique = UniquePromise::new_for_astro();
