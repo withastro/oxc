@@ -347,7 +347,8 @@ pub fn parse_astro<'a>(
         let padding = " ".repeat(info.content_start);
         let padded_source = allocator.alloc_str(&format!("{padding}{frontmatter_content}"));
 
-        let ts_source_type = SourceType::ts().with_module(true).with_jsx(source_type.is_jsx());
+        // TS, not TSX: `<T>expr` in the component script is a type assertion, not a tag.
+        let ts_source_type = SourceType::ts().with_module(true);
 
         // Create a new parser for the frontmatter content
         // Enable allow_return_outside_function for Astro frontmatter per spec §2.1
@@ -372,7 +373,7 @@ pub fn parse_astro<'a>(
         // No frontmatter - create a synthetic empty frontmatter with empty Program
         // This is needed so semantic analysis has a Program root node
         let ast = AstBuilder::new(allocator);
-        let ts_source_type = SourceType::ts().with_module(true).with_jsx(true);
+        let ts_source_type = SourceType::ts().with_module(true);
         let empty_program = ast.program(
             Span::new(0, 0),
             ts_source_type,

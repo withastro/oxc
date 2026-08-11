@@ -1124,6 +1124,65 @@ const name = "World";
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
     }
 
+    // The component script is TypeScript, not TSX, so `<T>expr` is a type assertion.
+    #[test]
+    fn parse_astro_frontmatter_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst x = <string>y;\n---\n<div/>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_generic_arrow() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst f = <T>(x: T) => x;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // The mirror image: JSX in the component script is not valid Astro and must not parse.
+    #[test]
+    fn parse_astro_frontmatter_rejects_jsx() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst jsx = <div />;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.errors.is_empty(), "expected JSX in the component script to be rejected");
+    }
+
+    // A bare `<script>` is TypeScript too, so the same assertion syntax must parse there.
+    #[test]
+    fn parse_astro_script_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<script>const x = <string>y;</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXChild::AstroScript(script) = &element.children[0] else {
+            panic!("Expected AstroScript child, got {:?}", element.children[0]);
+        };
+        assert_eq!(script.program.body.len(), 1);
+        assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
     #[test]
     fn parse_astro_attribute_with_at_sign() {
         let allocator = Allocator::default();
@@ -5128,11 +5187,8 @@ console.log(msg);
         let Expression::JSXFragment(fragment) = right else {
             panic!("expected implicit fragment for bare siblings, got {right:?}");
         };
-        let text_children = fragment
-            .children
-            .iter()
-            .filter(|c| matches!(c, JSXChild::Text(_)))
-            .count();
+        let text_children =
+            fragment.children.iter().filter(|c| matches!(c, JSXChild::Text(_))).count();
         assert_eq!(text_children, 1, "inter-sibling whitespace should be a JSXText node");
     }
 
@@ -5166,8 +5222,7 @@ console.log(msg);
             let JSXChild::ExpressionContainer(container) = &ret.root.body[0] else {
                 panic!("expected expression container for {source:?}");
             };
-            let Some(Expression::LogicalExpression(logical)) =
-                container.expression.as_expression()
+            let Some(Expression::LogicalExpression(logical)) = container.expression.as_expression()
             else {
                 panic!("expected `&&` logical expression for {source:?}");
             };
