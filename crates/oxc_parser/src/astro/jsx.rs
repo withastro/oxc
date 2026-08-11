@@ -328,17 +328,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 }
                 Kind::LCurly => {
                     let span_start = self.start_span();
+                    self.lexer.astro_jsx_expression_depth += 1;
                     self.bump_any(); // bump `{`
 
-                    if self.eat(Kind::Dot3) {
-                        children.push(JSXChild::Spread(self.parse_jsx_spread_child(span_start)));
-                        continue;
-                    }
-                    children.push(JSXChild::ExpressionContainer(
-                        self.parse_astro_jsx_expression_container(
+                    let child = if self.eat(Kind::Dot3) {
+                        JSXChild::Spread(self.parse_jsx_spread_child(span_start))
+                    } else {
+                        JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
                             span_start, /* in_jsx_child */ true,
-                        ),
-                    ));
+                        ))
+                    };
+
+                    self.lexer.astro_jsx_expression_depth -= 1;
+                    children.push(child);
                 }
                 Kind::JSXText => {
                     children.push(JSXChild::Text(self.parse_jsx_text()));
