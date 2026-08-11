@@ -80,10 +80,11 @@ fn scan_astro_frontmatter(source_text: &str) -> Option<AstroFrontmatterInfo> {
     // Calculate where the body starts (after closing `---`)
     // Skip optional newline after closing fence
     let mut body_start = frontmatter_end;
-    if source_text.get(body_start..).is_some_and(|s| s.starts_with('\n')) {
-        body_start += 1;
-    } else if source_text.get(body_start..).is_some_and(|s| s.starts_with("\r\n")) {
+    let after_fence = source_text.get(body_start..).unwrap_or_default();
+    if after_fence.starts_with("\r\n") {
         body_start += 2;
+    } else if after_fence.starts_with('\n') || after_fence.starts_with('\r') {
+        body_start += 1;
     }
 
     Some(AstroFrontmatterInfo { content_start, content_end, frontmatter_end, body_start })
@@ -260,10 +261,18 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
             }
 
             State::LineComment => {
-                // Line comment ends at newline
-                if b == b'\n' {
+                // Missing a terminator runs the comment to EOF and silently drops the frontmatter.
+                if b == b'\n' || b == b'\r' {
                     state = State::Normal;
                     slash_is_regex = true;
+                } else if b == 0xE2
+                    && i + 2 < len
+                    && bytes[i + 1] == 0x80
+                    && matches!(bytes[i + 2], 0xA8 | 0xA9)
+                {
+                    state = State::Normal;
+                    slash_is_regex = true;
+                    i += 2;
                 }
             }
 

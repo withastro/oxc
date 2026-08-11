@@ -1128,6 +1128,51 @@ const name = "World";
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
     }
 
+    // A `//` comment ends at any line terminator, not just `\n`, or the scan for the
+    // closing fence runs to EOF and the frontmatter is silently lost.
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_lone_cr() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\r// ---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_line_separator() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\u{2028}// ---\u{2028}const a = 1;\u{2028}---\u{2028}<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // A lone `\r` after the closing fence is a line ending too, so it must not
+    // survive as a leading text node in the body.
+    #[test]
+    fn parse_astro_frontmatter_lone_cr_after_closing_fence_is_skipped() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1, "body: {:?}", ret.root.body);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+    }
+
     // The component script is TypeScript, not TSX, so `<T>expr` is a type assertion.
     #[test]
     fn parse_astro_frontmatter_angle_bracket_type_assertion() {
