@@ -142,6 +142,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
         SingleQuote,
         DoubleQuote,
         TemplateLiteral,
+        TemplateExpression,
         LineComment,
         BlockComment,
         Regex,
@@ -152,6 +153,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
     let bytes = search_area.as_bytes();
     let len = bytes.len();
     let mut state = State::Normal;
+    // State to resume after a string, comment, or regex encountered in code.
+    let mut return_state = State::Normal;
+    // One entry per open template literal. Zero means template text; a positive
+    // value is the brace depth of the current `${...}` expression.
+    let mut template_stack: Vec<u32> = Vec::new();
     let mut i = 0;
 
     // Track whether a `/` should be interpreted as starting a regex literal vs division.
@@ -174,26 +180,32 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 // Check for string/comment/regex starts
                 match b {
                     b'\'' => {
+                        return_state = State::Normal;
                         state = State::SingleQuote;
                         slash_is_regex = true;
                     }
                     b'"' => {
+                        return_state = State::Normal;
                         state = State::DoubleQuote;
                         slash_is_regex = true;
                     }
                     b'`' => {
+                        template_stack.push(0);
                         state = State::TemplateLiteral;
                         slash_is_regex = true;
                     }
                     b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
+                        return_state = State::Normal;
                         state = State::LineComment;
                         i += 1; // Skip the second '/'
                     }
                     b'/' if i + 1 < len && bytes[i + 1] == b'*' => {
+                        return_state = State::Normal;
                         state = State::BlockComment;
                         i += 1; // Skip the '*'
                     }
                     b'/' if slash_is_regex => {
+                        return_state = State::Normal;
                         state = State::Regex;
                     }
                     // Characters that indicate the next `/` is a regex (not division):
@@ -223,11 +235,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     // Skip escaped character
                     i += 1;
                 } else if b == b'\'' {
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = false;
                 } else if b == b'\n' || b == b'\r' {
                     // Newline ends single-quote string (syntax error in JS, but we recover)
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = true;
                 }
             }
@@ -237,11 +249,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     // Skip escaped character
                     i += 1;
                 } else if b == b'"' {
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = false;
                 } else if b == b'\n' || b == b'\r' {
                     // Newline ends double-quote string (syntax error in JS, but we recover)
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = true;
                 }
             }
@@ -250,19 +262,85 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 if b == b'\\' && i + 1 < len {
                     // Skip escaped character
                     i += 1;
+                } else if b == b'$' && i + 1 < len && bytes[i + 1] == b'{' {
+                    *template_stack.last_mut().unwrap() = 1;
+                    state = State::TemplateExpression;
+                    slash_is_regex = true;
+                    i += 1; // Skip the '{'
                 } else if b == b'`' {
-                    state = State::Normal;
+                    template_stack.pop();
+                    state = if template_stack.is_empty() {
+                        State::Normal
+                    } else {
+                        State::TemplateExpression
+                    };
                     slash_is_regex = false;
                 }
-                // Note: template literals CAN span multiple lines, so no newline handling
-                // We also don't track ${...} interpolations - `---` inside interpolation
-                // would be very rare and would likely be a syntax error anyway
+                // Template literals can span multiple lines.
             }
+
+            State::TemplateExpression => match b {
+                b'\'' => {
+                    return_state = State::TemplateExpression;
+                    state = State::SingleQuote;
+                    slash_is_regex = true;
+                }
+                b'"' => {
+                    return_state = State::TemplateExpression;
+                    state = State::DoubleQuote;
+                    slash_is_regex = true;
+                }
+                b'`' => {
+                    template_stack.push(0);
+                    state = State::TemplateLiteral;
+                    slash_is_regex = true;
+                }
+                b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
+                    return_state = State::TemplateExpression;
+                    state = State::LineComment;
+                    i += 1;
+                }
+                b'/' if i + 1 < len && bytes[i + 1] == b'*' => {
+                    return_state = State::TemplateExpression;
+                    state = State::BlockComment;
+                    i += 1;
+                }
+                b'/' if slash_is_regex => {
+                    return_state = State::TemplateExpression;
+                    state = State::Regex;
+                }
+                b'{' => {
+                    *template_stack.last_mut().unwrap() += 1;
+                    slash_is_regex = true;
+                }
+                b'}' => {
+                    let depth = template_stack.last_mut().unwrap();
+                    *depth -= 1;
+                    if *depth == 0 {
+                        state = State::TemplateLiteral;
+                    }
+                    slash_is_regex = false;
+                }
+                b'=' | b'(' | b'[' | b';' | b',' | b'!' | b'&' | b'|' | b'^' | b'~' | b'?'
+                | b':' | b'<' | b'>' | b'+' | b'-' | b'*' | b'%' | b'\n' | b'\r' => {
+                    slash_is_regex = true;
+                }
+                b')' | b']' => {
+                    slash_is_regex = false;
+                }
+                b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => {
+                    slash_is_regex = false;
+                }
+                b' ' | b'\t' => {}
+                _ => {
+                    slash_is_regex = true;
+                }
+            },
 
             State::LineComment => {
                 // Line comment ends at newline
                 if b == b'\n' {
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = true;
                 }
             }
@@ -270,7 +348,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
             State::BlockComment => {
                 // Block comment ends at */
                 if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
-                    state = State::Normal;
+                    state = return_state;
                     i += 1; // Skip the '/'
                     // Don't change slash_is_regex - preserve the context from before the comment
                 }
@@ -285,14 +363,14 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     state = State::RegexCharClass;
                 } else if b == b'/' {
                     // End of regex literal - skip optional flags (g, i, m, s, u, v, y, d)
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = false;
                     while i + 1 < len && bytes[i + 1].is_ascii_alphabetic() {
                         i += 1;
                     }
                 } else if b == b'\n' || b == b'\r' {
                     // Regex can't span lines - this was actually a division, recover
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = true;
                 }
             }
@@ -306,7 +384,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     state = State::Regex;
                 } else if b == b'\n' || b == b'\r' {
                     // Regex can't span lines - recover
-                    state = State::Normal;
+                    state = return_state;
                     slash_is_regex = true;
                 }
             }
@@ -412,4 +490,119 @@ pub fn parse_astro<'a>(
     let root = ast.astro_root(span, frontmatter, body);
 
     AstroParserReturn { root, errors, panicked: body_panicked, body_comments }
+}
+
+#[cfg(test)]
+mod tests {
+    use oxc_allocator::Allocator;
+    use oxc_span::SourceType;
+
+    use super::{parse_astro, scan_astro_frontmatter};
+    use crate::ParseOptions;
+
+    fn assert_frontmatter_body(source: &str, expected_body: &str) {
+        let info = scan_astro_frontmatter(source).expect("frontmatter should be found");
+        assert_eq!(&source[info.body_start..], expected_body);
+    }
+
+    #[test]
+    fn finds_fence_after_nested_template_literals() {
+        let source = r#"---
+const value = `<div>${condition ? "" : `<span>${title}</span>`}</div>`;
+---
+<div>{value}</div>"#;
+
+        assert_frontmatter_body(source, "<div>{value}</div>");
+    }
+
+    #[test]
+    fn tracks_javascript_context_inside_template_interpolations() {
+        let source = r#"---
+const value = `outer ${(() => {
+    const object = { nested: { value: "}" } };
+    const pattern = /[{}]/;
+    // A backtick and fence in a comment must not close anything: ` ---
+    /* Neither should these: ` } --- */
+    return `inner ${object.nested.value}`;
+})()}`;
+---
+<p>{value}</p>"#;
+
+        assert_frontmatter_body(source, "<p>{value}</p>");
+    }
+
+    #[test]
+    fn handles_template_literal_edge_cases() {
+        let cases = [
+            (
+                "escaped template characters",
+                r#"---
+const value = `escaped \` fence --- and \${notAnInterpolation}`;
+---
+<p>{value}</p>"#,
+                "<p>{value}</p>",
+            ),
+            (
+                "deep and sibling interpolations",
+                r#"---
+const value = `outer ${`middle ${`inner`}`} ${one} ${two}`;
+---
+<p>{value}</p>"#,
+                "<p>{value}</p>",
+            ),
+            (
+                "division and regex",
+                r#"---
+const value = `${total / divisor} ${/---/.test(text)}`;
+---
+<p>{value}</p>"#,
+                "<p>{value}</p>",
+            ),
+            (
+                "same-line fences",
+                r#"---const value = `outer ${`inner`}`;---<p>{value}</p>"#,
+                "<p>{value}</p>",
+            ),
+            (
+                "CRLF line endings",
+                "---\r\nconst value = `outer ${`inner`}`;\r\n---\r\n<p>{value}</p>",
+                "<p>{value}</p>",
+            ),
+        ];
+
+        for (name, source, expected_body) in cases {
+            let info = scan_astro_frontmatter(source)
+                .unwrap_or_else(|| panic!("frontmatter should be found for {name}"));
+            assert_eq!(&source[info.body_start..], expected_body, "{name}");
+        }
+    }
+
+    #[test]
+    fn rejects_unclosed_nested_template_literal() {
+        let source = r#"---
+const value = `outer ${`unterminated`;
+---
+<p>{value}</p>"#;
+
+        assert!(scan_astro_frontmatter(source).is_none());
+    }
+
+    #[test]
+    fn parses_nested_template_literals_in_frontmatter() {
+        let allocator = Allocator::default();
+        let source = r#"---
+let hideTitle = false;
+let title = "Hello";
+let srcdoc = `<div>${hideTitle ? "" : `<span>${title}</span>`}</div>`;
+---
+<div>{srcdoc}</div>"#;
+
+        let ret = parse_astro(&allocator, source, SourceType::astro(), ParseOptions::default());
+
+        assert!(!ret.panicked);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 3);
+        assert!(!ret.root.body.is_empty());
+    }
 }
