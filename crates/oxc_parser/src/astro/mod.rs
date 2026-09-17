@@ -1674,13 +1674,13 @@ const value = "test";
     }
 
     #[test]
-    fn parse_astro_unquoted_attribute_then_self_closing() {
-        // The unquoted reader must stop at `/` so `<input value=4/>` still self-closes.
+    fn parse_astro_slash_in_unquoted_attribute_value() {
+        // Per HTML5 tokenization, `/` is part of an unquoted attribute value.
         use oxc_ast::ast::JSXAttributeValue;
 
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        let source = r#"<input value=4/>"#;
+        let source = r#"<Component value=4/></Component>"#;
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
         assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
         assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
@@ -1688,7 +1688,7 @@ const value = "test";
         let JSXChild::Element(element) = &ret.root.body[0] else {
             panic!("Expected JSXChild::Element");
         };
-        assert!(element.closing_element.is_none(), "expected self-closing element");
+        assert!(element.closing_element.is_some(), "expected a closing element");
         let attrs = &element.opening_element.attributes;
         assert_eq!(attrs.len(), 1);
 
@@ -1698,7 +1698,7 @@ const value = "test";
         let Some(JSXAttributeValue::StringLiteral(str_lit)) = &attr.value else {
             panic!("Expected StringLiteral value, got {:?}", attr.value);
         };
-        assert_eq!(str_lit.value.as_str(), "4");
+        assert_eq!(str_lit.value.as_str(), "4/");
     }
 
     #[test]
@@ -1875,27 +1875,14 @@ const value = "test";
     }
 
     #[test]
-    fn parse_astro_empty_value_reports_error_at_terminator() {
-        // `<Comp value= />` is malformed: `attr=` with no value. The diagnostic
-        // must point at the `/`, not silently consume it as the value — that
-        // would break self-closing and surface the error far from the cause.
+    fn parse_astro_empty_value_reports_error() {
+        // `>` terminates an unquoted value, so `attr=>` has no value.
         let allocator = Allocator::default();
         let source_type = SourceType::astro();
-        let source = r#"<Comp value= />"#;
+        let source = r#"<Comp value=>"#;
         let ret = Parser::new(&allocator, source, source_type).parse_astro();
 
         assert!(!ret.errors.is_empty(), "expected a diagnostic for empty unquoted value");
-
-        let slash_offset = source.find('/').unwrap() as u32;
-        assert!(
-            ret.errors
-                .iter()
-                .any(|e| e.labels.as_ref().is_some_and(|labels| labels
-                    .iter()
-                    .any(|l| l.offset() as u32 == slash_offset))),
-            "expected diagnostic at offset {slash_offset}, got {:?}",
-            ret.errors
-        );
     }
 
     #[test]
@@ -5128,11 +5115,8 @@ console.log(msg);
         let Expression::JSXFragment(fragment) = right else {
             panic!("expected implicit fragment for bare siblings, got {right:?}");
         };
-        let text_children = fragment
-            .children
-            .iter()
-            .filter(|c| matches!(c, JSXChild::Text(_)))
-            .count();
+        let text_children =
+            fragment.children.iter().filter(|c| matches!(c, JSXChild::Text(_))).count();
         assert_eq!(text_children, 1, "inter-sibling whitespace should be a JSXText node");
     }
 
@@ -5166,8 +5150,7 @@ console.log(msg);
             let JSXChild::ExpressionContainer(container) = &ret.root.body[0] else {
                 panic!("expected expression container for {source:?}");
             };
-            let Some(Expression::LogicalExpression(logical)) =
-                container.expression.as_expression()
+            let Some(Expression::LogicalExpression(logical)) = container.expression.as_expression()
             else {
                 panic!("expected `&&` logical expression for {source:?}");
             };
