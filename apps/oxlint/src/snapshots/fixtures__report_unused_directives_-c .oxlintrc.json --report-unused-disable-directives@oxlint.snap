@@ -90,14 +90,6 @@ working directory: fixtures/report_unused_directives
     `----
   help: Remove the debugger statement
 
-  ! Unused eslint-disable directive (no problems were reported).
-    ,-[test.astro:17:3]
- 16 | <script>
- 17 | // eslint-disable-next-line no-unused-vars
-    :   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
- 18 | const unusedVariable2 = 100;
-    `----
-
   ! Unused eslint-disable directive (no problems were reported from no-debugger).
     ,-[test.astro:28:41]
  27 | 
@@ -320,7 +312,7 @@ working directory: fixtures/report_unused_directives
  37 | </script>
     `----
 
-Found 38 warnings and 0 errors.
+Found 37 warnings and 0 errors.
 Finished in <variable>ms on 5 files with 94 rules using 1 threads.
 ----------
 CLI result: LintSucceeded

@@ -14,7 +14,8 @@ rust-version.workspace = true
 description.workspace = true
 
 [features]
-default = []
+default = ["astro"]
+astro = ["oxc_parser/astro", "oxc_semantic/astro"]
 ruledocs = ["oxc_macros/ruledocs"] # Enables the `ruledocs` feature for conditional compilation
 force_test_reporter = []
 

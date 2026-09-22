@@ -66,6 +66,13 @@ impl<C: Config> Lexer<'_, C> {
     /// `JSXFragment`
     /// { `JSXChildExpressionopt` }
     fn read_jsx_child(&mut self) -> Kind {
+        // Astro mode has its own JSX child reading logic with different rules
+        // (permissive `<` handling, foreign content, `>` as text, etc.)
+        #[cfg(feature = "astro")]
+        if self.source_type.is_astro() {
+            return self.read_astro_jsx_child();
+        }
+
         match self.peek_byte() {
             Some(b'<') => {
                 self.consume_char();

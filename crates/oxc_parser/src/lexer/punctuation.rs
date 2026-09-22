@@ -1,8 +1,7 @@
 use oxc_span::Span;
 
-use crate::{config::LexerConfig as Config, diagnostics};
-
 use super::{Kind, Lexer, Token};
+use crate::{config::LexerConfig as Config, diagnostics};
 
 impl<C: Config> Lexer<'_, C> {
     /// Section 12.8 Punctuators
@@ -35,7 +34,13 @@ impl<C: Config> Lexer<'_, C> {
             }
             // `<!--` HTML comment (Annex B.1.1)
             Some(b'!') if self.remaining().starts_with("!--") => {
-                if self.source_type.is_module() {
+                if self.source_type.is_astro() {
+                    // In Astro, `<!--` is always an HTML comment for the template/JSX
+                    // parser (matched to `-->`), never the legacy JS line comment that
+                    // skips to EOL. Emit `<` so it reaches that parser regardless of
+                    // newline position.
+                    Some(Kind::LAngle)
+                } else if self.source_type.is_module() {
                     if self.token.is_on_new_line() {
                         let span = Span::new(self.token.start(), self.token.start() + 4);
                         self.errors.push(diagnostics::html_comment_in_module(span));

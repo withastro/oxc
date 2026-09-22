@@ -1126,4 +1126,34 @@ impl<'a> VisitMut<'a> for Utf8ToUtf16Converter<'_> {
         walk_mut::walk_js_doc_unknown_type(self, it);
         self.convert_offset(&mut it.span.end);
     }
+
+    fn visit_astro_root(&mut self, it: &mut AstroRoot<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_root(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
+
+    fn visit_astro_frontmatter(&mut self, it: &mut AstroFrontmatter<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_frontmatter(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
+
+    fn visit_astro_script(&mut self, it: &mut AstroScript<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_script(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
+
+    fn visit_astro_doctype(&mut self, it: &mut AstroDoctype<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_doctype(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
+
+    fn visit_astro_comment(&mut self, it: &mut AstroComment<'a>) {
+        self.convert_offset(&mut it.span.start);
+        walk_mut::walk_astro_comment(self, it);
+        self.convert_offset(&mut it.span.end);
+    }
 }

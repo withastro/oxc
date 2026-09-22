@@ -769,6 +769,13 @@ pub fn jsx_fragment_no_match(opening_span: Span, closing_span: Span) -> OxcDiagn
     ])
 }
 
+/// A closing tag was found that does not correspond to any open element.
+#[cold]
+pub fn jsx_unexpected_closing_tag(span: Span, name: &str) -> OxcDiagnostic {
+    OxcDiagnostic::error(format!("Closing tag '</{name}>' has no matching opening tag."))
+        .with_label(span.primary_label("No matching opening tag"))
+}
+
 #[cold]
 pub fn cover_initialized_name(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Invalid assignment in object literal")
