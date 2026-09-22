@@ -28,6 +28,17 @@ impl<'a> Dummy<'a> for JSXClosing<'a> {
     }
 }
 
+/// How an element's children are read.
+#[derive(Clone, Copy, PartialEq)]
+enum AstroElementContent {
+    /// Ordinary JSX children.
+    Jsx,
+    /// Everything up to the closing tag is one text node (`<style>`, `is:raw`).
+    RawText,
+    /// Tags are text but `{…}` expressions are still parsed (`<title>`, `<textarea>`).
+    RcData,
+}
+
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     // ==================== Astro-specific JSX entry points ====================
     //
@@ -117,7 +128,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         span: u32,
         in_jsx_child: bool,
     ) -> Box<'a, JSXElement<'a>> {
-        let (opening_element, self_closing, is_raw_text_element, prev_no_expression) =
+        let (opening_element, self_closing, content_kind) =
             self.parse_astro_jsx_opening_element(span, in_jsx_child);
 
         let (children, closing_element) = if self_closing {
@@ -129,25 +140,25 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 .push(opening_element.name.span().source_text(self.source_text));
 
             // Raw text elements (script/style/is:raw): content is raw text, not JSX children.
-            let (children, closing) = if is_raw_text_element {
-                let children =
-                    self.skip_astro_raw_text_element_content(&opening_element.name, in_jsx_child);
-                // Restore the no-expression flag
-                self.lexer.no_expression_in_jsx_children = prev_no_expression;
+            let (children, closing) = if content_kind == AstroElementContent::Jsx {
+                self.parse_astro_jsx_children_and_closing(in_jsx_child)
+            } else {
+                let children = if content_kind == AstroElementContent::RawText {
+                    self.skip_astro_raw_text_element_content(&opening_element.name, in_jsx_child)
+                } else {
+                    self.parse_astro_rcdata_element_content(&opening_element.name, in_jsx_child)
+                };
                 // Parse `</name>` closing tag
                 let closing_span = self.start_span();
                 self.bump_any(); // bump `<`
                 self.bump_any(); // bump `/`
                 let closing = self.parse_astro_jsx_closing_inline(closing_span, in_jsx_child);
                 (children, closing)
-            } else {
-                let result = self.parse_astro_jsx_children_and_closing(in_jsx_child);
-                self.lexer.no_expression_in_jsx_children = prev_no_expression;
-                result
             };
 
             // This element is no longer open.
             let _ = self.astro_open_elements.pop();
+            self.sync_astro_no_expression();
 
             let closing_element = match closing {
                 JSXClosing::Element(e) => {
@@ -174,16 +185,15 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     }
 
     /// Astro-specific version of `parse_jsx_opening_element`.
-    /// Returns (opening_element, self_closing, is_raw_text_element, prev_no_expression).
+    /// Returns (opening_element, self_closing, content_kind).
     fn parse_astro_jsx_opening_element(
         &mut self,
         span: u32,
         in_jsx_child: bool,
     ) -> (
         Box<'a, JSXOpeningElement<'a>>,
-        bool, // `true` if self-closing
-        bool, // `true` if raw text element (script/style)
-        bool, // previous value of no_expression_in_jsx_children (to restore on close)
+        bool,                // `true` if self-closing
+        AstroElementContent, // how the children are read
     ) {
         let name = self.parse_astro_jsx_element_name();
         let type_arguments = if self.is_ts { self.try_parse_type_arguments() } else { None };
@@ -193,14 +203,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         // HTML void elements are implicitly self-closing even without `/`
         let self_closing = explicit_self_closing || Self::is_astro_void_element(&name);
 
-        // Check if this is a raw text element
-        let is_raw_text =
-            Self::is_astro_raw_text_element(&name) || Self::has_is_raw_attribute(&attributes);
+        // `is:raw` wins over RCDATA, so `<textarea is:raw>` suppresses expressions too.
+        let content_kind =
+            if Self::is_astro_raw_text_element(&name) || Self::has_is_raw_attribute(&attributes) {
+                AstroElementContent::RawText
+            } else if Self::is_astro_rcdata_element(&name) {
+                AstroElementContent::RcData
+            } else {
+                AstroElementContent::Jsx
+            };
+        let is_raw_text = content_kind != AstroElementContent::Jsx;
 
         // For foreign content elements like <math>, set the no-expression flag
-        let is_foreign = Self::is_foreign_content_element(&name);
-        let prev_no_expression = self.lexer.no_expression_in_jsx_children;
-        if is_foreign && !self_closing {
+        if Self::is_foreign_content_element(&name) && !self_closing {
             self.lexer.no_expression_in_jsx_children = true;
         }
 
@@ -219,7 +234,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             type_arguments,
             attributes,
         );
-        (elem, self_closing, is_raw_text, prev_no_expression)
+        (elem, self_closing, content_kind)
     }
 
     /// Astro-specific version of `parse_jsx_element_name`.
@@ -328,17 +343,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 }
                 Kind::LCurly => {
                     let span_start = self.start_span();
+                    self.lexer.astro_jsx_expression_depth += 1;
                     self.bump_any(); // bump `{`
 
-                    if self.eat(Kind::Dot3) {
-                        children.push(JSXChild::Spread(self.parse_jsx_spread_child(span_start)));
-                        continue;
-                    }
-                    children.push(JSXChild::ExpressionContainer(
-                        self.parse_astro_jsx_expression_container(
+                    let child = if self.eat(Kind::Dot3) {
+                        JSXChild::Spread(self.parse_jsx_spread_child(span_start))
+                    } else {
+                        JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
                             span_start, /* in_jsx_child */ true,
-                        ),
-                    ));
+                        ))
+                    };
+
+                    self.lexer.astro_jsx_expression_depth -= 1;
+                    children.push(child);
                 }
                 Kind::JSXText => {
                     children.push(JSXChild::Text(self.parse_jsx_text()));
@@ -365,6 +382,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             JSXClosing::Fragment(self.ast.jsx_closing_fragment(self.end_span(open_angle_span)))
         } else {
             let name = self.parse_astro_jsx_element_name();
+            // Consuming `>` below already lexes the token after it.
+            self.sync_astro_no_expression_for_closing(name.span().source_text(self.source_text));
             if in_jsx_child {
                 self.expect_jsx_child(Kind::RAngle);
             } else {
@@ -787,6 +806,16 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
     }
 
+    /// Elements whose tags are literal text but whose `{…}` expressions still evaluate.
+    fn is_astro_rcdata_element(name: &JSXElementName<'a>) -> bool {
+        match name {
+            JSXElementName::Identifier(ident) => {
+                matches!(ident.name.as_str(), "title" | "textarea")
+            }
+            _ => false,
+        }
+    }
+
     /// Determine whether a `<script>` tag's content should be treated as raw text
     /// (i.e. NOT parsed as JavaScript/TypeScript).
     ///
@@ -844,9 +873,34 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Check if the element is a foreign content element where `{` is literal text.
     fn is_foreign_content_element(name: &JSXElementName<'a>) -> bool {
         match name {
-            JSXElementName::Identifier(ident) => ident.name.as_str() == "math",
+            JSXElementName::Identifier(ident) => Self::is_foreign_content_name(ident.name.as_str()),
             _ => false,
         }
+    }
+
+    fn is_foreign_content_name(name: &str) -> bool {
+        name == "math"
+    }
+
+    /// Put the lexer back in the mode the currently open elements call for:
+    /// `{` is literal text only while a foreign content element is open.
+    fn sync_astro_no_expression(&mut self) {
+        let in_foreign_content =
+            self.astro_open_elements.iter().any(|name| Self::is_foreign_content_name(name));
+        self.lexer.no_expression_in_jsx_children = in_foreign_content;
+    }
+
+    /// [`Self::sync_astro_no_expression`] for the tag being closed, which ends every
+    /// open element down to the innermost one it names — a `</math>` inside `<mi>`
+    /// closes both. A name that matches nothing open is stray and closes nothing.
+    fn sync_astro_no_expression_for_closing(&mut self, closing_name: &str) {
+        let still_open =
+            match self.astro_open_elements.iter().rposition(|name| *name == closing_name) {
+                Some(index) => &self.astro_open_elements[..index],
+                None => &self.astro_open_elements[..],
+            };
+        let in_foreign_content = still_open.iter().any(|name| Self::is_foreign_content_name(name));
+        self.lexer.no_expression_in_jsx_children = in_foreign_content;
     }
 
     /// Check if attributes contain `is:raw` directive.
@@ -993,7 +1047,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
-            && let Some(end_offset) = rest.find(closing_tag)
+            && let Some(end_offset) = find_raw_text_content_end(rest, closing_tag)
         {
             let content_end = content_start + end_offset;
 
@@ -1144,7 +1198,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let start_pos = self.prev_token_end as usize;
         if let Some(rest) = self.source_text.get(start_pos..)
-            && let Some(end_pos) = rest.find(&closing_tag)
+            && let Some(end_pos) = find_raw_text_content_end(rest, &closing_tag)
         {
             #[expect(clippy::cast_possible_truncation)]
             let content_end = (start_pos + end_pos) as u32;
@@ -1166,6 +1220,101 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
 
         self.ast.vec()
+    }
+
+    /// Parse the content of an RCDATA element (`<title>`, `<textarea>`): tags inside are
+    /// literal text, but `{…}` expressions still interpolate.
+    ///
+    /// The closing tag is found by a plain search, so a `</title>` inside an attribute or a
+    /// string still ends the element.
+    #[expect(clippy::cast_possible_truncation)]
+    pub(crate) fn parse_astro_rcdata_element_content(
+        &mut self,
+        name: &JSXElementName<'a>,
+        in_jsx_child: bool,
+    ) -> Vec<'a, JSXChild<'a>> {
+        let tag_name = match name {
+            JSXElementName::Identifier(ident) => ident.name.as_str(),
+            JSXElementName::IdentifierReference(ident_ref) => ident_ref.name.as_str(),
+            _ => name.span().source_text(self.source_text),
+        };
+        let closing_tag = format!("</{tag_name}");
+
+        let start_pos = self.prev_token_end as usize;
+        // Without a closing tag there is no content to delimit; fall back like raw text.
+        if self
+            .source_text
+            .get(start_pos..)
+            .and_then(|rest| find_raw_text_content_end(rest, &closing_tag))
+            .is_none()
+        {
+            return self.ast.vec();
+        }
+
+        let mut children = self.ast.vec();
+        let mut pos = start_pos;
+
+        let content_end = loop {
+            let rest = &self.source_text[pos..];
+            let Some(close_rel) = find_raw_text_content_end(rest, &closing_tag) else { break pos };
+            let Some(brace_rel) = rest.find('{').filter(|brace| *brace < close_rel) else {
+                break pos + close_rel;
+            };
+
+            let brace_at = pos + brace_rel;
+            if brace_at > pos {
+                let span = Span::new(pos as u32, brace_at as u32);
+                let text = span.source_text(self.source_text);
+                children.push(JSXChild::Text(self.ast.alloc_jsx_text(
+                    span,
+                    text,
+                    Some(Atom::from(text)),
+                )));
+            }
+
+            self.lexer.set_position_for_astro(brace_at as u32);
+            self.token = self.lexer.next_jsx_child();
+
+            let span_start = self.start_span();
+            self.lexer.astro_jsx_expression_depth += 1;
+            self.bump_any(); // bump `{`
+            let child =
+                if self.eat(Kind::Dot3) {
+                    JSXChild::Spread(self.parse_jsx_spread_child(span_start))
+                } else {
+                    JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
+                        span_start, /* in_jsx_child */ true,
+                    ))
+                };
+            self.lexer.astro_jsx_expression_depth -= 1;
+            children.push(child);
+
+            let after = self.prev_token_end as usize;
+            // Guard against an expression that consumed nothing, which would spin forever.
+            if after <= brace_at || self.fatal_error.is_some() {
+                break pos + close_rel;
+            }
+            pos = after;
+        };
+
+        if content_end > pos {
+            let span = Span::new(pos as u32, content_end as u32);
+            let text = span.source_text(self.source_text);
+            children.push(JSXChild::Text(self.ast.alloc_jsx_text(
+                span,
+                text,
+                Some(Atom::from(text)),
+            )));
+        }
+
+        self.lexer.set_position_for_astro(content_end as u32);
+        if in_jsx_child {
+            self.token = self.lexer.next_jsx_child();
+        } else {
+            self.token = self.lexer.next_token();
+        }
+
+        children
     }
 
     /// Parse HTML comment in JSX (Astro-specific).
@@ -1310,4 +1459,21 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let fragment = self.ast.alloc_jsx_fragment(fragment_span, opening, children, closing);
         JSXExpression::JSXFragment(fragment)
     }
+}
+
+/// HTML5 ends a raw text element only when `</tag` is followed by whitespace, `/` or `>`.
+pub(super) fn find_raw_text_content_end(rest: &str, closing_tag: &str) -> Option<usize> {
+    let mut searched = 0;
+    while let Some(found) = rest[searched..].find(closing_tag) {
+        let at = searched + found;
+        let after = at + closing_tag.len();
+        match rest.as_bytes().get(after) {
+            None => return Some(at),
+            Some(byte) if byte.is_ascii_whitespace() || *byte == b'/' || *byte == b'>' => {
+                return Some(at);
+            }
+            _ => searched = after,
+        }
+    }
+    None
 }

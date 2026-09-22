@@ -105,17 +105,21 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             Kind::LCurly => {
                 // JSX expression container
                 let span_start = self.start_span();
+                self.lexer.astro_jsx_expression_depth += 1;
                 self.bump_any(); // bump `{`
 
                 // `{...expr}` - spread
-                if self.eat(Kind::Dot3) {
-                    return Some(JSXChild::Spread(self.parse_jsx_spread_child(span_start)));
-                }
+                let child = if self.eat(Kind::Dot3) {
+                    JSXChild::Spread(self.parse_jsx_spread_child(span_start))
+                } else {
+                    // `{expr}` - expression
+                    JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
+                        span_start, /* in_jsx_child */ true,
+                    ))
+                };
 
-                // `{expr}` - expression
-                Some(JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
-                    span_start, /* in_jsx_child */ true,
-                )))
+                self.lexer.astro_jsx_expression_depth -= 1;
+                Some(child)
             }
             Kind::JSXText => Some(JSXChild::Text(self.parse_jsx_text())),
             Kind::Eof => None,
@@ -314,7 +318,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let closing_tag = "</script";
 
         if let Some(rest) = self.source_text.get(content_start..)
-            && let Some(end_offset) = rest.find(closing_tag)
+            && let Some(end_offset) = jsx::find_raw_text_content_end(rest, closing_tag)
         {
             let content_end = content_start + end_offset;
 
@@ -1124,6 +1128,110 @@ const name = "World";
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
     }
 
+    // A `//` comment ends at any line terminator, not just `\n`, or the scan for the
+    // closing fence runs to EOF and the frontmatter is silently lost.
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_lone_cr() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\r// ---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_line_separator() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\u{2028}// ---\u{2028}const a = 1;\u{2028}---\u{2028}<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // A lone `\r` after the closing fence is a line ending too, so it must not
+    // survive as a leading text node in the body.
+    #[test]
+    fn parse_astro_frontmatter_lone_cr_after_closing_fence_is_skipped() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1, "body: {:?}", ret.root.body);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+    }
+
+    // The component script is TypeScript, not TSX, so `<T>expr` is a type assertion.
+    #[test]
+    fn parse_astro_frontmatter_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst x = <string>y;\n---\n<div/>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_generic_arrow() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst f = <T>(x: T) => x;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // The mirror image: JSX in the component script is not valid Astro and must not parse.
+    #[test]
+    fn parse_astro_frontmatter_rejects_jsx() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst jsx = <div />;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.errors.is_empty(), "expected JSX in the component script to be rejected");
+    }
+
+    // A bare `<script>` is TypeScript too, so the same assertion syntax must parse there.
+    #[test]
+    fn parse_astro_script_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<script>const x = <string>y;</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXChild::AstroScript(script) = &element.children[0] else {
+            panic!("Expected AstroScript child, got {:?}", element.children[0]);
+        };
+        assert_eq!(script.program.body.len(), 1);
+        assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
     #[test]
     fn parse_astro_attribute_with_at_sign() {
         let allocator = Allocator::default();
@@ -1295,6 +1403,41 @@ const name = "World";
         assert_eq!(attr.span.source_text(source), "{prop}");
         assert_eq!(container.span.source_text(source), "{prop}");
         assert_eq!(name.span.source_text(source), "prop");
+    }
+
+    /// `</tag` only closes a raw text element when followed by whitespace, `/` or `>`.
+    #[test]
+    fn parse_astro_raw_text_element_ignores_lookalike_end_tags() {
+        let lookalikes = [
+            "<style>h1 { color: red } /* </style-ish */</style>",
+            "<style>h1 { color: red } /* </styleX */</style>",
+            r#"<script>const s = "</script-ish";</script>"#,
+            r#"<script type="application/json">{"a": "</script-ish"}</script>"#,
+            "<div is:raw>a </div-x b</div>",
+        ];
+        for source in lookalikes {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+        }
+    }
+
+    #[test]
+    fn parse_astro_raw_text_element_closes_on_real_end_tags() {
+        let closing = [
+            "<style>h1 { color: red }</style>",
+            "<style>h1 { color: red }</style >",
+            "<script>const a = 1;</script>",
+            "<div is:raw>a</div>",
+        ];
+        for source in closing {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+            assert_eq!(ret.root.body.len(), 1, "{source:?}: expected a single element");
+        }
     }
 
     /// Shorthand is desugared away, so this span relationship is all consumers have to detect it.
@@ -4577,6 +4720,199 @@ export async function getStaticPaths() {
         assert_eq!(comment_count, 2, "Expected 2 HTML comments in the output");
     }
 
+    // `<title>` and `<textarea>` are raw text except for `{…}`, which still interpolates.
+    #[test]
+    fn parse_astro_textarea_tags_are_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea><div></textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "<div>");
+    }
+
+    #[test]
+    fn parse_astro_title_tags_are_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<title><div></title>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "<div>");
+    }
+
+    #[test]
+    fn parse_astro_title_interleaves_text_and_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<title>{t} - <b>bold</b></title>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        assert!(matches!(element.children[0], JSXChild::ExpressionContainer(_)));
+        let JSXChild::Text(text) = &element.children[1] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[1]);
+        };
+        assert_eq!(text.value.as_str(), " - <b>bold</b>");
+    }
+
+    #[test]
+    fn parse_astro_textarea_expression_between_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea>a <div>b</div> {c}</textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text");
+        };
+        assert_eq!(text.value.as_str(), "a <div>b</div> ");
+        assert!(matches!(element.children[1], JSXChild::ExpressionContainer(_)));
+    }
+
+    // `is:raw` outranks RCDATA, so expressions stop interpolating.
+    #[test]
+    fn parse_astro_textarea_is_raw_suppresses_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea is:raw>{x}</textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "{x}");
+    }
+
+    // A `}` with no expression container open around it is ordinary text, at any depth.
+    #[test]
+    fn parse_astro_stray_closing_brace_in_top_level_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "x } y";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Text(text) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", ret.root.body[0]);
+        };
+        assert_eq!(text.value.as_str(), "x } y");
+    }
+
+    #[test]
+    fn parse_astro_only_closing_braces_is_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "}}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Text(text) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", ret.root.body[0]);
+        };
+        assert_eq!(text.value.as_str(), "}}");
+    }
+
+    #[test]
+    fn parse_astro_stray_closing_brace_inside_element() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<p>a } b</p>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "a } b");
+    }
+
+    // Once a container has closed, the next `}` is text again.
+    #[test]
+    fn parse_astro_closing_brace_after_expression_is_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{x} } y";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+        let tail: String = ret.root.body[1..]
+            .iter()
+            .map(|c| match c {
+                JSXChild::Text(t) => t.value.as_str(),
+                other => panic!("Expected JSXChild::Text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, " } y");
+    }
+
+    // A stray `}` must not swallow an expression container later in the same element.
+    #[test]
+    fn parse_astro_expression_still_parses_after_stray_closing_brace() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div>a } b { c }</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text");
+        };
+        assert_eq!(text.value.as_str(), "a } b ");
+        assert!(matches!(element.children[1], JSXChild::ExpressionContainer(_)));
+    }
+
     #[test]
     fn parse_astro_math_foreign_content() {
         // {2x} inside <math> should be literal text, not an expression
@@ -4648,6 +4984,177 @@ export async function getStaticPaths() {
                 el.children.iter().any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
             assert!(has_expression, "{{expr}} inside <svg> should be an expression, not text");
         }
+    }
+
+    fn count_expression_containers(children: &[JSXChild<'_>]) -> usize {
+        children
+            .iter()
+            .map(|child| match child {
+                JSXChild::ExpressionContainer(_) => 1,
+                JSXChild::Element(el) => count_expression_containers(&el.children),
+                JSXChild::Fragment(fragment) => count_expression_containers(&fragment.children),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    #[test]
+    fn parse_astro_expression_after_math_closing_tag() {
+        let source = "<math>{x}</math>{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "{{x}} inside <math> should be text"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_nested_math_closing_tag() {
+        let source = "<math><math>{a}</math>{b}</math>{c}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "braces inside nested <math> should be text"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{c}} after the outer </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_self_closing_math() {
+        let source = "<math />{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after <math /> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_unclosed_math_reports_error() {
+        let source = "<math>{x}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.errors.is_empty(), "unclosed <math> should report an error");
+    }
+
+    #[test]
+    fn parse_astro_stray_closing_tag_inside_math() {
+        let source = "<math>{x}</foo>{y}</math>{z}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert_eq!(ret.errors.len(), 1, "only the stray </foo> should error: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "a stray closing tag should not end foreign content"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{z}} after </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_math_inside_expression_container() {
+        let source = "<div>{<math>{x}</math>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(div)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <div> element");
+        };
+        let Some(JSXChild::ExpressionContainer(container)) = div.children.first() else {
+            panic!("<div> should have an expression container child");
+        };
+        let JSXExpression::JSXElement(math) = &container.expression else {
+            panic!("expression should contain the <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "{{x}} inside <math> should be text"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_closing_tag_of_element_outside_math() {
+        // `</div>` closes the unterminated <math> as well as the <div>
+        let source = "<div><math>{x}</div>{y}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert_eq!(ret.errors.len(), 1, "only the mismatched tag should error: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </div> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_math_inside_element() {
+        let source = "<div><math>{x}</math></div>{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </div> should be an expression"
+        );
     }
 
     #[test]
