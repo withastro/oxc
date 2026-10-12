@@ -161,12 +161,8 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
     let mut template_stack: Vec<u32> = Vec::new();
     let mut i = 0;
 
-    // Track whether a `/` should be interpreted as starting a regex literal vs division.
-    // After these characters, `/` is the start of a regex literal:
-    //   punctuation/operators that cannot end an expression value.
-    // After identifiers, numbers, `)`, `]`, `++`, `--`, `/` is division.
-    // We track this with a simple flag: `true` means the next `/` could be a regex start.
-    let mut slash_is_regex = true;
+    // Whether a `/` in code starts a regex literal or is division.
+    let mut regex = RegexContext::default();
 
     while i < len {
         let b = bytes[i];
@@ -183,17 +179,17 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     b'\'' => {
                         return_state = State::Normal;
                         state = State::SingleQuote;
-                        slash_is_regex = true;
+                        regex.set(true);
                     }
                     b'"' => {
                         return_state = State::Normal;
                         state = State::DoubleQuote;
-                        slash_is_regex = true;
+                        regex.set(true);
                     }
                     b'`' => {
                         template_stack.push(0);
                         state = State::TemplateLiteral;
-                        slash_is_regex = true;
+                        regex.set(true);
                     }
                     b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
                         return_state = State::Normal;
@@ -205,29 +201,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                         state = State::BlockComment;
                         i += 1; // Skip the '*'
                     }
-                    b'/' if slash_is_regex => {
+                    b'/' if regex.slash_is_regex => {
                         return_state = State::Normal;
                         state = State::Regex;
                     }
-                    // Characters that indicate the next `/` is a regex (not division):
-                    // operators, punctuation, keywords that precede expressions
-                    b'=' | b'(' | b'[' | b'{' | b'}' | b';' | b',' | b'!' | b'&' | b'|' | b'^'
-                    | b'~' | b'?' | b':' | b'<' | b'>' | b'+' | b'-' | b'*' | b'%' | b'\n'
-                    | b'\r' => {
-                        slash_is_regex = true;
-                    }
-                    // After identifiers, numbers, `)`, `]`, `/` is division
-                    b')' | b']' => {
-                        slash_is_regex = false;
-                    }
-                    b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => {
-                        slash_is_regex = false;
-                    }
-                    // Whitespace doesn't change the slash_is_regex flag
-                    b' ' | b'\t' => {}
-                    _ => {
-                        slash_is_regex = true;
-                    }
+                    _ => i = regex.code_byte(bytes, i),
                 }
             }
 
@@ -237,11 +215,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     i += 1;
                 } else if b == b'\'' {
                     state = return_state;
-                    slash_is_regex = false;
+                    regex.set(false);
                 } else if b == b'\n' || b == b'\r' {
                     // Newline ends single-quote string (syntax error in JS, but we recover)
                     state = return_state;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
             }
 
@@ -251,11 +229,11 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     i += 1;
                 } else if b == b'"' {
                     state = return_state;
-                    slash_is_regex = false;
+                    regex.set(false);
                 } else if b == b'\n' || b == b'\r' {
                     // Newline ends double-quote string (syntax error in JS, but we recover)
                     state = return_state;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
             }
 
@@ -266,7 +244,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 } else if b == b'$' && i + 1 < len && bytes[i + 1] == b'{' {
                     *template_stack.last_mut().unwrap() = 1;
                     state = State::TemplateExpression;
-                    slash_is_regex = true;
+                    regex.set(true);
                     i += 1; // Skip the '{'
                 } else if b == b'`' {
                     template_stack.pop();
@@ -275,7 +253,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     } else {
                         State::TemplateExpression
                     };
-                    slash_is_regex = false;
+                    regex.set(false);
                 }
                 // Template literals can span multiple lines.
             }
@@ -284,17 +262,17 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 b'\'' => {
                     return_state = State::TemplateExpression;
                     state = State::SingleQuote;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
                 b'"' => {
                     return_state = State::TemplateExpression;
                     state = State::DoubleQuote;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
                 b'`' => {
                     template_stack.push(0);
                     state = State::TemplateLiteral;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
                 b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
                     return_state = State::TemplateExpression;
@@ -306,50 +284,38 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                     state = State::BlockComment;
                     i += 1;
                 }
-                b'/' if slash_is_regex => {
+                b'/' if regex.slash_is_regex => {
                     return_state = State::TemplateExpression;
                     state = State::Regex;
                 }
                 b'{' => {
                     *template_stack.last_mut().unwrap() += 1;
-                    slash_is_regex = true;
+                    regex.code_byte(bytes, i);
                 }
                 b'}' => {
                     let depth = template_stack.last_mut().unwrap();
                     *depth -= 1;
                     if *depth == 0 {
                         state = State::TemplateLiteral;
+                        regex.set(false);
+                    } else {
+                        regex.code_byte(bytes, i);
                     }
-                    slash_is_regex = false;
                 }
-                b'=' | b'(' | b'[' | b';' | b',' | b'!' | b'&' | b'|' | b'^' | b'~' | b'?'
-                | b':' | b'<' | b'>' | b'+' | b'-' | b'*' | b'%' | b'\n' | b'\r' => {
-                    slash_is_regex = true;
-                }
-                b')' | b']' => {
-                    slash_is_regex = false;
-                }
-                b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' => {
-                    slash_is_regex = false;
-                }
-                b' ' | b'\t' => {}
-                _ => {
-                    slash_is_regex = true;
-                }
+                _ => i = regex.code_byte(bytes, i),
             },
 
             State::LineComment => {
                 // Missing a terminator runs the comment to EOF and silently drops the frontmatter.
+                // Like a block comment, a line comment preserves the context before it.
                 if b == b'\n' || b == b'\r' {
                     state = return_state;
-                    slash_is_regex = true;
                 } else if b == 0xE2
                     && i + 2 < len
                     && bytes[i + 1] == 0x80
                     && matches!(bytes[i + 2], 0xA8 | 0xA9)
                 {
                     state = return_state;
-                    slash_is_regex = true;
                     i += 2;
                 }
             }
@@ -359,7 +325,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
                     state = return_state;
                     i += 1; // Skip the '/'
-                    // Don't change slash_is_regex - preserve the context from before the comment
+                    // Don't change the regex context - preserve the context from before the comment
                 }
             }
 
@@ -373,14 +339,14 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 } else if b == b'/' {
                     // End of regex literal - skip optional flags (g, i, m, s, u, v, y, d)
                     state = return_state;
-                    slash_is_regex = false;
+                    regex.set(false);
                     while i + 1 < len && bytes[i + 1].is_ascii_alphabetic() {
                         i += 1;
                     }
                 } else if b == b'\n' || b == b'\r' {
                     // Regex can't span lines - this was actually a division, recover
                     state = return_state;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
             }
 
@@ -394,7 +360,7 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
                 } else if b == b'\n' || b == b'\r' {
                     // Regex can't span lines - recover
                     state = return_state;
-                    slash_is_regex = true;
+                    regex.set(true);
                 }
             }
         }
@@ -403,6 +369,125 @@ fn find_closing_fence(search_area: &str) -> Option<usize> {
     }
 
     None
+}
+
+/// Tracks just enough JavaScript token context to tell whether a `/` starts a regex
+/// literal or is the division operator, for [`find_closing_fence`].
+///
+/// A `/` starts a regex where an expression may begin: after most punctuation and
+/// operators, after keywords such as `return` or `typeof`, and after the `)` that
+/// closes an `if (…)`, `while (…)`, `for (…)` or `with (…)` head. It is division
+/// after an identifier, literal, `]`, or any other `)`.
+struct RegexContext {
+    /// `true` when a `/` here would start a regex literal.
+    slash_is_regex: bool,
+    /// `true` right after an `if`/`while`/`for`/`with` keyword, so a following `(`
+    /// opens a statement head.
+    after_control_keyword: bool,
+    /// `true` right after `.`, where a keyword is a property name.
+    after_dot: bool,
+    /// One entry per open `(`: whether its `)` ends a statement head.
+    parens: Vec<bool>,
+}
+
+impl Default for RegexContext {
+    fn default() -> Self {
+        Self {
+            slash_is_regex: true,
+            after_control_keyword: false,
+            after_dot: false,
+            parens: vec![],
+        }
+    }
+}
+
+impl RegexContext {
+    /// Record a token (string, template, regex, …) that leaves `slash_is_regex`.
+    fn set(&mut self, slash_is_regex: bool) {
+        self.slash_is_regex = slash_is_regex;
+        self.after_control_keyword = false;
+        self.after_dot = false;
+    }
+
+    /// Consume the code byte at `i`, which does not start a string, template,
+    /// comment or regex. Returns the index of the last byte consumed: a whole word
+    /// is consumed at once so keywords can be recognized.
+    fn code_byte(&mut self, bytes: &[u8], i: usize) -> usize {
+        let b = bytes[i];
+        match b {
+            // Whitespace and line breaks don't change the context.
+            b' ' | b'\t' | b'\n' | b'\r' => i,
+            b'(' => {
+                self.parens.push(self.after_control_keyword);
+                self.set(true);
+                i
+            }
+            b')' => {
+                let ends_statement_head = self.parens.pop().unwrap_or(false);
+                self.set(ends_statement_head);
+                i
+            }
+            b']' => {
+                self.set(false);
+                i
+            }
+            b'.' => {
+                // A digit after `.` starts a number (`.5`); handled as a word below.
+                if bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+                    return self.word(bytes, i);
+                }
+                self.set(true);
+                self.after_dot = true;
+                i
+            }
+            b if is_identifier_byte(b) => self.word(bytes, i),
+            // Any other punctuation or operator.
+            _ => {
+                self.set(true);
+                i
+            }
+        }
+    }
+
+    /// Consume the identifier, keyword or number starting at `i`.
+    fn word(&mut self, bytes: &[u8], i: usize) -> usize {
+        let mut end = i + 1;
+        while end < bytes.len()
+            && (is_identifier_byte(bytes[end]) || bytes[end] == b'.' && bytes[i].is_ascii_digit())
+        {
+            end += 1;
+        }
+        let word = &bytes[i..end];
+        let is_keyword = !self.after_dot;
+        let precedes_expression = is_keyword
+            && matches!(
+                word,
+                b"return"
+                    | b"typeof"
+                    | b"instanceof"
+                    | b"in"
+                    | b"of"
+                    | b"new"
+                    | b"delete"
+                    | b"void"
+                    | b"throw"
+                    | b"case"
+                    | b"do"
+                    | b"else"
+                    | b"yield"
+                    | b"await"
+            );
+        let is_control = is_keyword && matches!(word, b"if" | b"while" | b"for" | b"with");
+        self.set(precedes_expression || is_control);
+        self.after_control_keyword = is_control;
+        end - 1
+    }
+}
+
+/// Whether `b` can be part of an identifier, keyword or number. Non-ASCII bytes are
+/// treated as identifier bytes, so a multi-byte identifier is consumed as one word.
+fn is_identifier_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || !b.is_ascii()
 }
 
 /// Parse an Astro file.
@@ -614,5 +699,68 @@ let srcdoc = `<div>${hideTitle ? "" : `<span>${title}</span>`}</div>`;
         let frontmatter = ret.root.frontmatter.as_ref().unwrap();
         assert_eq!(frontmatter.program.body.len(), 3);
         assert!(!ret.root.body.is_empty());
+    }
+
+    #[test]
+    fn regex_literals_containing_fences_do_not_end_frontmatter() {
+        let cases = [
+            "function f() { return /---/.test(x); }",
+            "if (x) /---/.test(x);",
+            "while (ok) /---/.exec(s)",
+            "for (const s of list) /---/.test(s);",
+            "if (a && (b || c)) /---/.test(x);",
+            "const t = typeof /---/;",
+            "const t = x instanceof /---/.constructor;",
+            "function* g() { yield /---/; }",
+            "async function f() { await /---/; }",
+            "if (x) {} else /---/.test(x);",
+            "throw /---/;",
+            "switch (x) { case /---/.source: break; }",
+            "const r = /[/]---/;",
+            "const v = `${ (() => { if (x) return /---/; })() }`;",
+            "return /---/;",
+        ];
+        for code in cases {
+            let source = format!("---\n{code}\n---\n<p/>");
+            let info = scan_astro_frontmatter(&source)
+                .unwrap_or_else(|| panic!("frontmatter should be found for {code:?}"));
+            assert_eq!(&source[info.body_start..], "<p/>", "{code:?}");
+        }
+    }
+
+    #[test]
+    fn division_is_not_mistaken_for_regex_in_frontmatter() {
+        // If any of these `/` were read as a regex start, the scanner would skip the
+        // fence (or the string) after it.
+        let cases = [
+            "const a = b / c; const d = e / f; // ---",
+            "const a = (b) / 2; const c = 1 / 2 /* --- */;",
+            "const a = x.return / 2 / 3;",
+            "const a = 1.5 / 2; const b = arr[0] / 2; const c = 'x' / 2;",
+            "const a = f(x) / 2 + `${(y) / 2}`;",
+            "const a = b\n  / c / d;",
+            "const a = b // comment\n  / c / d;",
+            "const a = b /* comment */ / c / d;",
+            "const a = 10 / 2; const b = \"---\";",
+        ];
+        for code in cases {
+            let source = format!("---\n{code}\n---\n<p/>");
+            let info = scan_astro_frontmatter(&source)
+                .unwrap_or_else(|| panic!("frontmatter should be found for {code:?}"));
+            assert_eq!(&source[info.body_start..], "<p/>", "{code:?}");
+        }
+    }
+
+    #[test]
+    fn parses_frontmatter_with_regex_after_return() {
+        let allocator = Allocator::default();
+        let source =
+            "---\nfunction f() { return /---/.test(x); }\nif (x) /---/.test(x);\n---\n<p/>";
+        let ret = parse_astro(&allocator, source, SourceType::astro(), ParseOptions::default());
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 2);
+        assert_eq!(frontmatter.span.end as usize, source.len() - "\n<p/>".len());
+        assert_eq!(ret.root.body.len(), 1);
     }
 }
