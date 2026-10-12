@@ -24,13 +24,11 @@ pub use parse::AstroParserReturn;
 pub use parse::parse_astro;
 pub use scripts::parse_astro_scripts;
 
-use oxc_allocator::{Box, Vec};
+use oxc_allocator::Vec;
 use oxc_ast::ast::*;
+use oxc_span::{GetSpan, Span};
 
-use crate::{ParserImpl, config::ParserConfig, lexer::Kind};
-
-type NoTypeArgs<'a> = Option<Box<'a, TSTypeParameterInstantiation<'a>>>;
-type NoClosingElement<'a> = Option<Box<'a, JSXClosingElement<'a>>>;
+use crate::{ParserImpl, config::ParserConfig, diagnostics, lexer::Kind};
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Parse the HTML body of an Astro file.
@@ -51,81 +49,87 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         children
     }
 
-    /// Parse a single child in the Astro body.
+    /// Parse a single child in the Astro body. Returns `None` only at the end of input.
     fn parse_astro_child(&mut self) -> Option<JSXChild<'a>> {
-        match self.cur_kind() {
-            Kind::LAngle => {
-                let span = self.start_span();
-                let checkpoint = self.checkpoint();
-                self.bump_any(); // bump `<`
+        loop {
+            if self.fatal_error.is_some() {
+                return None;
+            }
+            match self.cur_kind() {
+                Kind::LAngle => {
+                    let span = self.start_span();
+                    self.bump_any(); // bump `<`
 
-                let kind = self.cur_kind();
+                    let kind = self.cur_kind();
 
-                // `<>` - fragment
-                if kind == Kind::RAngle {
-                    return Some(JSXChild::Fragment(self.parse_astro_jsx_fragment(span, true)));
-                }
+                    // `<>` - fragment
+                    if kind == Kind::RAngle {
+                        return Some(JSXChild::Fragment(self.parse_astro_jsx_fragment(span, true)));
+                    }
 
-                // `<ident` - element
-                if kind == Kind::Ident || kind.is_any_keyword() {
-                    // Check if this is a <script> tag - we handle it specially in Astro
-                    if self.cur_src().starts_with("script") {
-                        // Check it's actually "script" and not "script-something"
-                        let after_script =
-                            self.source_text.get((self.cur_token().span().start as usize) + 6..);
-                        if let Some(rest) = after_script {
-                            let next_char: Option<char> = rest.chars().next();
-                            if matches!(
-                                next_char,
-                                Some(' ' | '>' | '/' | '\n' | '\r' | '\t') | None
-                            ) {
-                                return Some(self.parse_astro_script(span));
-                            }
+                    // `<ident` - element
+                    if kind == Kind::Ident || kind.is_any_keyword() {
+                        // `<script>` is handled specially in Astro
+                        if self.at_astro_script_tag() {
+                            return Some(self.parse_astro_script_in_jsx(span, true));
                         }
+                        return Some(JSXChild::Element(self.parse_astro_jsx_element(span, true)));
                     }
-                    return Some(JSXChild::Element(self.parse_astro_jsx_element(span, true)));
-                }
 
-                // `</` - closing tag (end of parent)
-                if kind == Kind::Slash {
-                    self.rewind(checkpoint);
-                    return None;
-                }
-
-                // `<!` - HTML comment or doctype
-                if kind == Kind::Bang {
-                    if let Some(doctype) = self.parse_html_comment_or_doctype(span) {
-                        return Some(doctype);
+                    // `</` - a closing tag at the root closes nothing: report and skip it.
+                    if kind == Kind::Slash {
+                        self.parse_astro_stray_root_closing_tag();
+                        continue;
                     }
-                    return self.parse_astro_child();
+
+                    // `<!` - HTML comment or doctype
+                    if kind == Kind::Bang {
+                        if let Some(doctype) = self.parse_html_comment_or_doctype(span) {
+                            return Some(doctype);
+                        }
+                        continue;
+                    }
+
+                    return self.unexpected();
                 }
-
-                self.unexpected()
-            }
-            Kind::LCurly => {
-                // JSX expression container
-                let span_start = self.start_span();
-                self.bump_any(); // bump `{`
-
-                // `{...expr}` - spread
-                if self.eat(Kind::Dot3) {
-                    return Some(JSXChild::Spread(self.parse_jsx_spread_child(span_start)));
+                Kind::LCurly => return Some(self.parse_astro_jsx_child_expression()),
+                Kind::JSXText => return Some(JSXChild::Text(self.parse_jsx_text())),
+                Kind::Eof => return None,
+                _ => {
+                    // In Astro body, we should be getting JSX tokens
+                    // If we get something unexpected, try to continue
+                    self.bump_any();
                 }
-
-                // `{expr}` - expression
-                Some(JSXChild::ExpressionContainer(self.parse_astro_jsx_expression_container(
-                    span_start, /* in_jsx_child */ true,
-                )))
-            }
-            Kind::JSXText => Some(JSXChild::Text(self.parse_jsx_text())),
-            Kind::Eof => None,
-            _ => {
-                // In Astro body, we should be getting JSX tokens
-                // If we get something unexpected, try to continue
-                self.bump_any();
-                self.parse_astro_child()
             }
         }
+    }
+
+    /// Consume a closing tag at the root of the body, where there is no open element
+    /// for it to close, and report it. The current token is the `/` after `<`.
+    ///
+    /// Like an HTML end tag, it extends to the next `>` (or the end of input).
+    #[expect(clippy::cast_possible_truncation)]
+    fn parse_astro_stray_root_closing_tag(&mut self) {
+        let slash = self.cur_token().span().start as usize;
+        let end =
+            self.source_text[slash..].find('>').map_or(self.source_text.len(), |gt| slash + gt + 1);
+        match self.source_text.as_bytes().get(slash + 1) {
+            Some(b) if b.is_ascii_alphabetic() => {
+                self.bump_any(); // bump `/`
+                let name_span = self.parse_astro_jsx_element_name().span();
+                let name = name_span.source_text(self.source_text);
+                self.error(diagnostics::jsx_unexpected_closing_tag(name_span, name));
+            }
+            Some(b'>') => {
+                let span = Span::new(slash as u32 - 1, end as u32);
+                self.error(diagnostics::jsx_unexpected_closing_tag(span, ""));
+            }
+            // Not a tag name (`</ 3>`); HTML skips it as a bogus comment.
+            _ => return self.skip_astro_bogus_closing_tag(),
+        }
+        self.lexer.set_position_for_astro(end as u32);
+        self.token = self.lexer.next_jsx_child();
+        self.prev_token_end = end as u32;
     }
 
     /// Parse an HTML comment `<!-- ... -->` or doctype `<!doctype ...>`.
@@ -214,222 +218,6 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             }
         }
         None // Fallback case, treat as comment (trivia)
-    }
-
-    /// Parse an Astro `<script>` element.
-    ///
-    /// According to the Astro spec and HTML rules:
-    /// - `<script>` with no `type` attribute, or with a JS/module MIME `type` →
-    ///   parsed as TypeScript/JavaScript (`AstroScript`)
-    /// - `<script type="text/css">` (or any other non-JS `type`) →
-    ///   raw text (not parsed)
-    ///
-    /// Non-`type` attributes (e.g. `defer`, `src`, `is:inline`) do **not** affect
-    /// whether the content is parsed.
-    #[expect(clippy::cast_possible_truncation)]
-    fn parse_astro_script(&mut self, span: u32) -> JSXChild<'a> {
-        // We're at `script` identifier after `<`
-        // Skip the `script` identifier
-        self.bump_any();
-
-        // Parse attributes using the Astro JSX attribute parser
-        let attributes = self.parse_astro_jsx_attributes();
-        let has_attributes = Self::is_raw_text_script(&attributes);
-
-        // Check for self-closing `/>`
-        let is_self_closing = if self.at(Kind::Slash) {
-            self.bump_any(); // skip `/`
-            true
-        } else {
-            false
-        };
-
-        if self.at(Kind::RAngle) {
-            self.bump_any(); // skip `>`
-        }
-
-        // Self-closing script tag
-        if is_self_closing {
-            let end = self.prev_token_end;
-            let script_span = oxc_span::Span::new(span, end);
-
-            if has_attributes {
-                // Script with attributes - return as regular JSX element with no children
-                let name =
-                    self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
-                let elem_name = JSXElementName::Identifier(self.alloc(name));
-                let no_type_args: NoTypeArgs<'a> = None;
-                let opening = self.ast.alloc_jsx_opening_element(
-                    script_span,
-                    elem_name,
-                    no_type_args,
-                    attributes,
-                );
-                let no_closing: NoClosingElement<'a> = None;
-                return JSXChild::Element(self.ast.alloc_jsx_element(
-                    script_span,
-                    opening,
-                    self.ast.vec(),
-                    no_closing,
-                ));
-            }
-
-            // Bare self-closing script - wrap empty AstroScript in JSX element
-            let program = self.ast.program(
-                oxc_span::Span::empty(end),
-                self.source_type,
-                "",
-                self.ast.vec(),
-                None,
-                self.ast.vec(),
-                self.ast.vec(),
-            );
-            let astro_script =
-                JSXChild::AstroScript(self.ast.alloc_astro_script(script_span, program));
-
-            // Wrap in a <script> element for consistency
-            let name = self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
-            let elem_name = JSXElementName::Identifier(self.alloc(name));
-            let no_type_args: NoTypeArgs<'a> = None;
-            let opening = self.ast.alloc_jsx_opening_element(
-                script_span,
-                elem_name,
-                no_type_args,
-                attributes,
-            );
-            let no_closing: NoClosingElement<'a> = None;
-            return JSXChild::Element(self.ast.alloc_jsx_element(
-                script_span,
-                opening,
-                self.ast.vec1(astro_script),
-                no_closing,
-            ));
-        }
-
-        // Find the closing </script> tag.
-        // Use `prev_token_end` (right after `>`) instead of `cur_token().span().start` so
-        // that leading trivia (e.g. `// eslint-disable-next-line` comments) before the first
-        // real token is included in the content span and picked up by the parser.
-        let content_start = self.prev_token_end as usize;
-        let closing_tag = "</script";
-
-        if let Some(rest) = self.source_text.get(content_start..)
-            && let Some(end_offset) = rest.find(closing_tag)
-        {
-            let content_end = content_start + end_offset;
-
-            // Move lexer to the closing tag
-            #[expect(clippy::cast_possible_truncation)]
-            self.lexer.set_position_for_astro(content_end as u32);
-            self.token = self.lexer.next_jsx_child();
-
-            // Find the `>` that closes `</script>` by scanning source text directly,
-            // rather than bumping tokens (which would use the wrong lexer mode).
-            let close_end = {
-                let close_source = &self.source_text[content_end..];
-                // close_source starts with "</script", find the closing ">"
-                if let Some(gt) = close_source.find('>') {
-                    content_end + gt + 1
-                } else {
-                    content_end
-                }
-            };
-
-            #[expect(clippy::cast_possible_truncation)]
-            let end = close_end as u32;
-            // Position the lexer right after `</script>` and re-enter JSX child
-            // mode so the next token is correctly tokenised.
-            self.lexer.set_position_for_astro(end);
-            self.token = self.lexer.next_jsx_child();
-            let full_span = oxc_span::Span::new(span, end);
-
-            if has_attributes {
-                // Script with attributes - return as regular JSX element
-                // The content is raw text, not parsed
-                let opening_name =
-                    self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
-                let opening_elem_name = JSXElementName::Identifier(self.alloc(opening_name));
-                let no_type_args: NoTypeArgs<'a> = None;
-                let opening = self.ast.alloc_jsx_opening_element(
-                    oxc_span::Span::new(span, content_start as u32),
-                    opening_elem_name,
-                    no_type_args,
-                    attributes,
-                );
-
-                let closing_name = self
-                    .ast
-                    .jsx_identifier(oxc_span::Span::new(content_end as u32 + 2, end - 1), "script");
-                let closing_elem_name = JSXElementName::Identifier(self.alloc(closing_name));
-                let closing = self.ast.alloc_jsx_closing_element(
-                    oxc_span::Span::new(content_end as u32, end),
-                    closing_elem_name,
-                );
-
-                // Create a text child for the raw content
-                let text_span = oxc_span::Span::new(content_start as u32, content_end as u32);
-                let raw_text = &self.source_text[content_start..content_end];
-                let text_node = self.ast.alloc_jsx_text(
-                    text_span,
-                    oxc_span::Atom::from(raw_text),
-                    Some(oxc_span::Atom::from(raw_text)),
-                );
-
-                return JSXChild::Element(self.ast.alloc_jsx_element(
-                    full_span,
-                    opening,
-                    self.ast.vec1(JSXChild::Text(text_node)),
-                    Some(closing),
-                ));
-            }
-
-            // Bare script - wrap AstroScript in <script> element
-            let script_content_span = oxc_span::Span::new(content_start as u32, content_end as u32);
-
-            let program = self.ast.program(
-                script_content_span,
-                self.source_type,
-                "",
-                self.ast.vec(),
-                None,
-                self.ast.vec(),
-                self.ast.vec(),
-            );
-            let astro_script =
-                JSXChild::AstroScript(self.ast.alloc_astro_script(full_span, program));
-
-            // Create <script> opening element
-            let opening_name =
-                self.ast.jsx_identifier(oxc_span::Span::new(span + 1, span + 7), "script");
-            let opening_elem_name = JSXElementName::Identifier(self.alloc(opening_name));
-            let no_type_args: NoTypeArgs<'a> = None;
-            let opening = self.ast.alloc_jsx_opening_element(
-                oxc_span::Span::new(span, content_start as u32),
-                opening_elem_name,
-                no_type_args,
-                attributes,
-            );
-
-            // Create </script> closing element
-            let closing_name = self
-                .ast
-                .jsx_identifier(oxc_span::Span::new(content_end as u32 + 2, end - 1), "script");
-            let closing_elem_name = JSXElementName::Identifier(self.alloc(closing_name));
-            let closing = self.ast.alloc_jsx_closing_element(
-                oxc_span::Span::new(content_end as u32, end),
-                closing_elem_name,
-            );
-
-            return JSXChild::Element(self.ast.alloc_jsx_element(
-                full_span,
-                opening,
-                self.ast.vec1(astro_script),
-                Some(closing),
-            ));
-        }
-
-        // Fallback: couldn't find closing tag, parse as regular element
-        JSXChild::Element(self.parse_astro_jsx_element(span, true))
     }
 }
 
@@ -1124,6 +912,110 @@ const name = "World";
         assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
     }
 
+    // A `//` comment ends at any line terminator, not just `\n`, or the scan for the
+    // closing fence runs to EOF and the frontmatter is silently lost.
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_lone_cr() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\r// ---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_line_comment_ended_by_line_separator() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\u{2028}// ---\u{2028}const a = 1;\u{2028}---\u{2028}<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // A lone `\r` after the closing fence is a line ending too, so it must not
+    // survive as a leading text node in the body.
+    #[test]
+    fn parse_astro_frontmatter_lone_cr_after_closing_fence_is_skipped() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\rconst a = 1;\r---\r<div />";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1, "body: {:?}", ret.root.body);
+        assert!(matches!(ret.root.body[0], JSXChild::Element(_)));
+    }
+
+    // The component script is TypeScript, not TSX, so `<T>expr` is a type assertion.
+    #[test]
+    fn parse_astro_frontmatter_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst x = <string>y;\n---\n<div/>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    #[test]
+    fn parse_astro_frontmatter_generic_arrow() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst f = <T>(x: T) => x;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let frontmatter = ret.root.frontmatter.as_ref().unwrap();
+        assert_eq!(frontmatter.program.body.len(), 1);
+        assert!(matches!(frontmatter.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
+    // The mirror image: JSX in the component script is not valid Astro and must not parse.
+    #[test]
+    fn parse_astro_frontmatter_rejects_jsx() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "---\nconst jsx = <div />;\n---";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.errors.is_empty(), "expected JSX in the component script to be rejected");
+    }
+
+    // A bare `<script>` is TypeScript too, so the same assertion syntax must parse there.
+    #[test]
+    fn parse_astro_script_angle_bracket_type_assertion() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<script>const x = <string>y;</script>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        let JSXChild::AstroScript(script) = &element.children[0] else {
+            panic!("Expected AstroScript child, got {:?}", element.children[0]);
+        };
+        assert_eq!(script.program.body.len(), 1);
+        assert!(matches!(script.program.body[0], Statement::VariableDeclaration(_)));
+    }
+
     #[test]
     fn parse_astro_attribute_with_at_sign() {
         let allocator = Allocator::default();
@@ -1295,6 +1187,41 @@ const name = "World";
         assert_eq!(attr.span.source_text(source), "{prop}");
         assert_eq!(container.span.source_text(source), "{prop}");
         assert_eq!(name.span.source_text(source), "prop");
+    }
+
+    /// `</tag` only closes a raw text element when followed by whitespace, `/` or `>`.
+    #[test]
+    fn parse_astro_raw_text_element_ignores_lookalike_end_tags() {
+        let lookalikes = [
+            "<style>h1 { color: red } /* </style-ish */</style>",
+            "<style>h1 { color: red } /* </styleX */</style>",
+            r#"<script>const s = "</script-ish";</script>"#,
+            r#"<script type="application/json">{"a": "</script-ish"}</script>"#,
+            "<div is:raw>a </div-x b</div>",
+        ];
+        for source in lookalikes {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+        }
+    }
+
+    #[test]
+    fn parse_astro_raw_text_element_closes_on_real_end_tags() {
+        let closing = [
+            "<style>h1 { color: red }</style>",
+            "<style>h1 { color: red }</style >",
+            "<script>const a = 1;</script>",
+            "<div is:raw>a</div>",
+        ];
+        for source in closing {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+            assert_eq!(ret.root.body.len(), 1, "{source:?}: expected a single element");
+        }
     }
 
     /// Shorthand is desugared away, so this span relationship is all consumers have to detect it.
@@ -4577,6 +4504,199 @@ export async function getStaticPaths() {
         assert_eq!(comment_count, 2, "Expected 2 HTML comments in the output");
     }
 
+    // `<title>` and `<textarea>` are raw text except for `{…}`, which still interpolates.
+    #[test]
+    fn parse_astro_textarea_tags_are_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea><div></textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "<div>");
+    }
+
+    #[test]
+    fn parse_astro_title_tags_are_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<title><div></title>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "<div>");
+    }
+
+    #[test]
+    fn parse_astro_title_interleaves_text_and_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<title>{t} - <b>bold</b></title>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        assert!(matches!(element.children[0], JSXChild::ExpressionContainer(_)));
+        let JSXChild::Text(text) = &element.children[1] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[1]);
+        };
+        assert_eq!(text.value.as_str(), " - <b>bold</b>");
+    }
+
+    #[test]
+    fn parse_astro_textarea_expression_between_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea>a <div>b</div> {c}</textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text");
+        };
+        assert_eq!(text.value.as_str(), "a <div>b</div> ");
+        assert!(matches!(element.children[1], JSXChild::ExpressionContainer(_)));
+    }
+
+    // `is:raw` outranks RCDATA, so expressions stop interpolating.
+    #[test]
+    fn parse_astro_textarea_is_raw_suppresses_expressions() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<textarea is:raw>{x}</textarea>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "{x}");
+    }
+
+    // A `}` with no expression container open around it is ordinary text, at any depth.
+    #[test]
+    fn parse_astro_stray_closing_brace_in_top_level_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "x } y";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Text(text) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", ret.root.body[0]);
+        };
+        assert_eq!(text.value.as_str(), "x } y");
+    }
+
+    #[test]
+    fn parse_astro_only_closing_braces_is_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "}}";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert_eq!(ret.root.body.len(), 1);
+        let JSXChild::Text(text) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", ret.root.body[0]);
+        };
+        assert_eq!(text.value.as_str(), "}}");
+    }
+
+    #[test]
+    fn parse_astro_stray_closing_brace_inside_element() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<p>a } b</p>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 1);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text, got {:?}", element.children[0]);
+        };
+        assert_eq!(text.value.as_str(), "a } b");
+    }
+
+    // Once a container has closed, the next `}` is text again.
+    #[test]
+    fn parse_astro_closing_brace_after_expression_is_text() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "{x} } y";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        assert!(matches!(ret.root.body[0], JSXChild::ExpressionContainer(_)));
+        let tail: String = ret.root.body[1..]
+            .iter()
+            .map(|c| match c {
+                JSXChild::Text(t) => t.value.as_str(),
+                other => panic!("Expected JSXChild::Text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, " } y");
+    }
+
+    // A stray `}` must not swallow an expression container later in the same element.
+    #[test]
+    fn parse_astro_expression_still_parses_after_stray_closing_brace() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let source = "<div>a } b { c }</div>";
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let JSXChild::Element(element) = &ret.root.body[0] else {
+            panic!("Expected JSXChild::Element");
+        };
+        assert_eq!(element.children.len(), 2);
+        let JSXChild::Text(text) = &element.children[0] else {
+            panic!("Expected JSXChild::Text");
+        };
+        assert_eq!(text.value.as_str(), "a } b ");
+        assert!(matches!(element.children[1], JSXChild::ExpressionContainer(_)));
+    }
+
     #[test]
     fn parse_astro_math_foreign_content() {
         // {2x} inside <math> should be literal text, not an expression
@@ -4648,6 +4768,177 @@ export async function getStaticPaths() {
                 el.children.iter().any(|c| matches!(c, JSXChild::ExpressionContainer(_)));
             assert!(has_expression, "{{expr}} inside <svg> should be an expression, not text");
         }
+    }
+
+    fn count_expression_containers(children: &[JSXChild<'_>]) -> usize {
+        children
+            .iter()
+            .map(|child| match child {
+                JSXChild::ExpressionContainer(_) => 1,
+                JSXChild::Element(el) => count_expression_containers(&el.children),
+                JSXChild::Fragment(fragment) => count_expression_containers(&fragment.children),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    #[test]
+    fn parse_astro_expression_after_math_closing_tag() {
+        let source = "<math>{x}</math>{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "{{x}} inside <math> should be text"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_nested_math_closing_tag() {
+        let source = "<math><math>{a}</math>{b}</math>{c}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "braces inside nested <math> should be text"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{c}} after the outer </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_self_closing_math() {
+        let source = "<math />{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after <math /> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_unclosed_math_reports_error() {
+        let source = "<math>{x}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.errors.is_empty(), "unclosed <math> should report an error");
+    }
+
+    #[test]
+    fn parse_astro_stray_closing_tag_inside_math() {
+        let source = "<math>{x}</foo>{y}</math>{z}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert_eq!(ret.errors.len(), 1, "only the stray </foo> should error: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(math)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "a stray closing tag should not end foreign content"
+        );
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{z}} after </math> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_math_inside_expression_container() {
+        let source = "<div>{<math>{x}</math>}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+
+        let Some(JSXChild::Element(div)) =
+            ret.root.body.iter().find(|c| matches!(c, JSXChild::Element(_)))
+        else {
+            panic!("should have a <div> element");
+        };
+        let Some(JSXChild::ExpressionContainer(container)) = div.children.first() else {
+            panic!("<div> should have an expression container child");
+        };
+        let JSXExpression::JSXElement(math) = &container.expression else {
+            panic!("expression should contain the <math> element");
+        };
+        assert_eq!(
+            count_expression_containers(&math.children),
+            0,
+            "{{x}} inside <math> should be text"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_closing_tag_of_element_outside_math() {
+        // `</div>` closes the unterminated <math> as well as the <div>
+        let source = "<div><math>{x}</div>{y}</div>";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert_eq!(ret.errors.len(), 1, "only the mismatched tag should error: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </div> should be an expression"
+        );
+    }
+
+    #[test]
+    fn parse_astro_expression_after_math_inside_element() {
+        let source = "<div><math>{x}</math></div>{y}";
+        let allocator = Allocator::default();
+        let source_type = SourceType::astro();
+        let ret = Parser::new(&allocator, source, source_type).parse_astro();
+        assert!(!ret.panicked, "parser panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "errors: {:?}", ret.errors);
+        assert_eq!(
+            count_expression_containers(&ret.root.body),
+            1,
+            "{{y}} after </div> should be an expression"
+        );
     }
 
     #[test]
@@ -5228,6 +5519,371 @@ console.log(msg);
         for source in ["<div><div{\n)</div>", "{x && (<a/>\n<div{\n)}", "<Comp {(\n} />"] {
             // The contract is "no panic"; these are still errors.
             let _ = Parser::new(&allocator, source, source_type).parse_astro();
+        }
+    }
+
+    /// A compact rendering of template children, for asserting parsed structure:
+    /// text as `"…"`, elements as `<name>[children]`, expressions and spreads as their
+    /// source, and `<script>` content as `script(statement count)`.
+    fn summarize(source: &str, children: &[JSXChild<'_>]) -> String {
+        use oxc_span::GetSpan;
+        let summarize_child = |child: &JSXChild<'_>| match child {
+            JSXChild::Text(text) => format!("{:?}", text.value.as_str()),
+            JSXChild::Element(element) => format!(
+                "<{}>[{}]",
+                element.opening_element.name.span().source_text(source),
+                summarize(source, &element.children)
+            ),
+            JSXChild::Fragment(fragment) => {
+                format!("<>[{}]", summarize(source, &fragment.children))
+            }
+            JSXChild::ExpressionContainer(container) => match &container.expression {
+                JSXExpression::JSXFragment(fragment) => {
+                    format!("{{[{}]}}", summarize(source, &fragment.children))
+                }
+                _ => container.span.source_text(source).to_string(),
+            },
+            JSXChild::Spread(spread) => spread.span.source_text(source).to_string(),
+            JSXChild::AstroScript(script) => format!("script({})", script.program.body.len()),
+            JSXChild::AstroDoctype(_) => "doctype".to_string(),
+            JSXChild::AstroComment(_) => "comment".to_string(),
+        };
+        children.iter().map(summarize_child).collect::<std::vec::Vec<_>>().join(", ")
+    }
+
+    /// Parse `source` and return its summarized body and error messages.
+    fn parse_summary(source: &str) -> (String, std::vec::Vec<String>) {
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+        assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+        let errors = ret.errors.iter().map(ToString::to_string).collect();
+        (summarize(source, &ret.root.body), errors)
+    }
+
+    #[track_caller]
+    fn assert_parses_to(source: &str, expected: &str) {
+        let (body, errors) = parse_summary(source);
+        assert!(errors.is_empty(), "{source:?} errors: {errors:?}");
+        assert_eq!(body, expected, "{source:?}");
+    }
+
+    #[test]
+    fn parse_astro_rcdata_in_foreign_content_is_raw_text() {
+        // `{` is literal text inside `<math>`, including in RCDATA elements there;
+        // expressions resume once `</math>` closes the foreign content.
+        assert_parses_to(
+            "<math><textarea>{x}</textarea></math>{y}",
+            r#"<math>[<textarea>["{x}"]], {y}"#,
+        );
+        assert_parses_to("<math><title>{x}</title></math>{y}", r#"<math>[<title>["{x}"]], {y}"#);
+        assert_parses_to(
+            "<math><mi><textarea>{x}<b>z</b></textarea></mi></math>{y}",
+            r#"<math>[<mi>[<textarea>["{x}<b>z</b>"]]], {y}"#,
+        );
+        // Outside foreign content, RCDATA expressions still interpolate.
+        assert_parses_to("<textarea>{x}</textarea>{y}", "<textarea>[{x}], {y}");
+        assert_parses_to("<title>a {b} c</title>", r#"<title>["a ", {b}, " c"]"#);
+    }
+
+    #[test]
+    fn parse_astro_rcdata_closing_tag_inside_expression() {
+        // A closing tag inside an expression's string doesn't end the element, but a
+        // lookalike tag name outside one doesn't either.
+        assert_parses_to(r#"<title>{"</title>"}</title>"#, r#"<title>[{"</title>"}]"#);
+        assert_parses_to(
+            "<title>{`</title>`} x</title-extra></title>",
+            r#"<title>[{`</title>`}, " x</title-extra>"]"#,
+        );
+        assert_parses_to("<textarea>{a}{b}{c}</textarea>", "<textarea>[{a}, {b}, {c}]");
+    }
+
+    #[test]
+    fn parse_astro_many_rcdata_expressions() {
+        // Each expression must not rescan the rest of the element for its closing tag.
+        let source = format!("<title>{}</title>", "{x}".repeat(20_000));
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, &source, SourceType::astro()).parse_astro();
+        assert!(ret.errors.is_empty(), "{:?}", ret.errors);
+        let JSXChild::Element(title) = &ret.root.body[0] else { panic!("expected <title>") };
+        assert_eq!(title.children.len(), 20_000);
+        assert_eq!(title.closing_element.as_ref().unwrap().span.start as usize, source.len() - 8);
+    }
+
+    #[test]
+    fn parse_astro_adjacent_closing_brace_is_text() {
+        assert_parses_to("<div>{x}} hello</div>", r#"<div>[{x}, "} hello"]"#);
+        assert_parses_to("{x}} hello", r#"{x}, "} hello""#);
+        assert_parses_to("<p>{/* hi */}} tail</p>", r#"<p>[{/* hi */}, "} tail"]"#);
+        assert_parses_to("<p>{...xs}} tail</p>", r#"<p>[{...xs}, "} tail"]"#);
+        assert_parses_to("{}}", r#"{}, "}""#);
+        assert_parses_to("<div>{x} } hello</div>", r#"<div>[{x}, " } hello"]"#);
+        assert_parses_to("<title>{x}}</title>", r#"<title>[{x}, "}"]"#);
+    }
+
+    #[test]
+    fn parse_astro_nested_expressions_in_template_expressions() {
+        // Nested containers in an expression's JSX children close in order, and the
+        // text after them is kept.
+        assert_parses_to("<p>{<b/>{a}text}</p>", r#"<p>[{[<b>[], {a}, "text"]}]"#);
+        assert_parses_to("<p>{<b/>{a}}}x</p>", r#"<p>[{[<b>[], {a}]}, "}x"]"#);
+        assert_parses_to("<p>{<b/>{...xs}} y}z</p>", r#"<p>[{[<b>[], {...xs}]}, " y}z"]"#);
+        assert_parses_to("<p>{<!-- c --> text }}x</p>", r#"<p>[{[comment, " text "]}, "}x"]"#);
+    }
+
+    #[test]
+    fn parse_astro_stray_root_closing_tag_is_skipped() {
+        let cases = [
+            ("</div><p>hello</p>", r#"<p>["hello"]"#, 1),
+            ("</div></span>text {x}<p/>", r#""text ", {x}, <p>[]"#, 2),
+            ("</div foo=\"x\">after", r#""after""#, 1),
+            ("</DIV>after", r#""after""#, 1),
+            ("</>after", r#""after""#, 1),
+            ("</ 3>after", r#""after""#, 1),
+            ("</\"abc>after{x}", r#""after", {x}"#, 1),
+            ("</div", "", 1),
+        ];
+        for (source, expected, error_count) in cases {
+            let (body, errors) = parse_summary(source);
+            assert_eq!(body, expected, "{source:?}");
+            assert_eq!(errors.len(), error_count, "{source:?}: {errors:?}");
+        }
+        // Nested closing tags still close their element.
+        assert_parses_to("<div><p>a</p></div>b", r#"<div>[<p>["a"]], "b""#);
+    }
+
+    #[test]
+    fn parse_astro_native_closing_tags_are_case_insensitive() {
+        assert_parses_to("<textarea>x</TEXTAREA>y", r#"<textarea>["x"], "y""#);
+        assert_parses_to("<title>{x}</TITLE>y", r#"<title>[{x}], "y""#);
+        assert_parses_to("<style>a</STYLE>b", r#"<style>["a"], "b""#);
+        assert_parses_to("<script>a</SCRIPT>b", r#"<script>[script(1)], "b""#);
+        assert_parses_to("<div is:raw>{x}</DIV>z", r#"<div>["{x}"], "z""#);
+        assert_parses_to("<div>a</DIV>b", r#"<div>["a"], "b""#);
+        assert_parses_to("<div><textarea>x</TextArea> t</div>", r#"<div>[<textarea>["x"], " t"]"#);
+        // Component names are case-sensitive.
+        assert_parses_to("<Code is:raw>{x}</code></Code>z", r#"<Code>["{x}</code>"], "z""#);
+        let (_, errors) = parse_summary("<Foo></foo></Foo>");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn parse_astro_non_javascript_script_content_is_not_lexed() {
+        assert_parses_to(r#"<script type="text/plain">"hello</script>"#, r#"<script>["\"hello"]"#);
+        assert_parses_to(
+            r#"<div><script type="text/plain">"hello</script></div>"#,
+            r#"<div>[<script>["\"hello"]]"#,
+        );
+        // Nor is the text after a closing `</script>`.
+        assert_parses_to(r#"<script></script>"a b"#, r#"<script>[script(0)], "\"a b""#);
+        assert_parses_to(
+            r#"<div><script></script>"a b</div>"#,
+            r#"<div>[<script>[script(0)], "\"a b"]"#,
+        );
+    }
+
+    #[test]
+    fn parse_astro_text_after_self_closing_script() {
+        assert_parses_to("<script/> hello {x}", r#"<script>[script(0)], " hello ", {x}"#);
+        assert_parses_to(
+            "<div><script/> hello {x}</div>",
+            r#"<div>[<script>[script(0)], " hello ", {x}]"#,
+        );
+        assert_parses_to(r#"<script type="text/plain" /> hello"#, r#"<script>[], " hello""#);
+        assert_parses_to("{cond && <script/>} tail", r#"{cond && <script/>}, " tail""#);
+    }
+
+    #[test]
+    fn parse_astro_script_closing_tag_forms() {
+        let allocator = Allocator::default();
+        let source = "<script>const x = 1;</script >after";
+        let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+        assert!(ret.errors.is_empty(), "{:?}", ret.errors);
+        assert_eq!(summarize(source, &ret.root.body), r#"<script>[script(1)], "after""#);
+        let JSXChild::Element(script) = &ret.root.body[0] else { panic!("expected <script>") };
+        let closing = script.closing_element.as_ref().unwrap();
+        assert_eq!((closing.span.start, closing.span.end), (20, 30));
+        assert_eq!(script.span.end, 30);
+
+        // Like HTML, an unclosed `<script>` runs to the end of the input.
+        assert_parses_to("<script>const x = 1;", "<script>[script(1)]");
+        // `<script-x>` and `<scripts>` are ordinary elements.
+        assert_parses_to("<script-x>a</script-x>", r#"<script-x>["a"]"#);
+        assert_parses_to("<scripts>a</scripts>", r#"<scripts>["a"]"#);
+    }
+
+    #[test]
+    fn parse_astro_scripts_anywhere_in_expressions_are_parsed() {
+        use cow_utils::CowUtils;
+
+        let valid = [
+            "{[<script>const x = 1;</script>]}",
+            "{{a: <script>const x = 1;</script>}}",
+            "{(((<script>const x = 1;</script>)))}",
+            "{f(() => { const y = 1; return <script>const x = 1;</script>; })}",
+            "{function () { for (;;) { return <script>const x = 1;</script>; } }}",
+            "<div foo={<script>const x = 1;</script>} />",
+            "<p>{...[<script>const x = 1;</script>]}</p>",
+            "{a ? b : [c, <script>const x = 1;</script>]}",
+        ];
+        for source in valid {
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+            assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+            let mut finder = ScriptFinder::default();
+            for child in &ret.root.body {
+                oxc_ast_visit::Visit::visit_jsx_child(&mut finder, child);
+            }
+            assert_eq!(finder.statement_counts, [1], "{source:?}");
+        }
+
+        // Errors in those scripts are reported.
+        for source in valid {
+            let source = source.cow_replace("const x = 1;", "const = ;");
+            let allocator = Allocator::default();
+            let ret = Parser::new(&allocator, &source, SourceType::astro()).parse_astro();
+            assert!(!ret.errors.is_empty(), "{source:?} should report the script's syntax error");
+        }
+    }
+
+    /// Every `JSXText` value in the body, in source order, including text nested in
+    /// elements inside expressions.
+    fn collect_texts(source: &str) -> std::vec::Vec<String> {
+        #[derive(Default)]
+        struct TextCollector(std::vec::Vec<String>);
+        impl<'a> oxc_ast_visit::Visit<'a> for TextCollector {
+            fn visit_jsx_text(&mut self, text: &oxc_ast::ast::JSXText<'a>) {
+                self.0.push(text.value.to_string());
+            }
+        }
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+        assert!(!ret.panicked, "{source:?} panicked: {:?}", ret.errors);
+        assert!(ret.errors.is_empty(), "{source:?} errors: {:?}", ret.errors);
+        let mut collector = TextCollector::default();
+        for child in &ret.root.body {
+            oxc_ast_visit::Visit::visit_jsx_child(&mut collector, child);
+        }
+        collector.0
+    }
+
+    #[test]
+    fn parse_astro_closing_brace_in_element_inside_expression() {
+        // A `}` in an element's children never closes a container opened outside the
+        // element: `{c}}` inside `<b>` leaves a literal `}` in `<b>`.
+        let cases: [(&str, &[&str]); 7] = [
+            ("<p>{a ? <b>{c}}</b> : null}}z</p>", &["}", "}z"]),
+            ("{a ? <b>{c}}</b> : null}z", &["}", "z"]),
+            ("{a ? <b>}</b> : null}z", &["}", "z"]),
+            ("{a ? <b>{c} } {d}</b> : null}z", &[" } ", "z"]),
+            ("<div>{a ? <b>{c}}</b> : <i>{d}</i>}} t</div>", &["}", "} t"]),
+            ("{a && <><b>{c}}</b>}</>}x", &["}", "}", "x"]),
+            ("{a ? <b><i>{c}}</i>}</b> : null}}z", &["}", "}", "}z"]),
+        ];
+        for (source, texts) in cases {
+            assert_eq!(collect_texts(source), texts, "{source:?}");
+        }
+        // A container closes in the element it was opened in.
+        assert_parses_to("<p>{a ? <b>{c}</b> : null}z</p>", r#"<p>[{a ? <b>{c}</b> : null}, "z"]"#);
+        assert_parses_to("{x}<p>{<b>t</b>}</p>{y}", "{x}, <p>[{<b>t</b>}], {y}");
+    }
+
+    #[test]
+    fn parse_astro_unclosed_elements_end_at_eof() {
+        let cases = [
+            ("<div>x", r#"<div>["x"]"#, 1),
+            ("<div><p>x", r#"<div>[<p>["x"]]"#, 2),
+            ("<>x", r#"<>["x"]"#, 1),
+            ("<p>a</p><div>{x}", r#"<p>["a"], <div>[{x}]"#, 1),
+            // Like HTML, raw text and RCDATA without a closing tag run to the end.
+            ("<style>a {}", r#"<style>["a {}"]"#, 1),
+            ("<div is:raw>{x}", r#"<div>["{x}"]"#, 1),
+            ("<textarea>a {b} c", r#"<textarea>["a ", {b}, " c"]"#, 1),
+        ];
+        for (source, expected, error_count) in cases {
+            let (body, errors) = parse_summary(source);
+            assert_eq!(body, expected, "{source:?}");
+            assert_eq!(errors.len(), error_count, "{source:?}: {errors:?}");
+            assert!(
+                errors.iter().all(|e| e.starts_with("Expected corresponding")),
+                "{source:?}: {errors:?}"
+            );
+        }
+
+        // An unclosed `<script>` runs to the end, leaving its parent unclosed.
+        let allocator = Allocator::default();
+        let source = "<div><script>x</div><p>y</p>";
+        let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+        assert!(!ret.panicked, "{:?}", ret.errors);
+        let JSXChild::Element(div) = &ret.root.body[0] else { panic!("expected <div>") };
+        assert!(div.closing_element.is_none());
+        assert_eq!(div.span.end as usize, source.len());
+        let JSXChild::Element(script) = &div.children[0] else { panic!("expected <script>") };
+        assert!(script.closing_element.is_none());
+        assert_eq!(script.span.end as usize, source.len());
+        assert!(ret.errors.iter().any(|e| e.to_string().contains("closing tag for 'div'")));
+    }
+
+    #[test]
+    fn parse_astro_invalid_rcdata_expression_recovers_at_closing_tag() {
+        let cases = [
+            ("<title>{x</title>after{y}", r#"<title>["{x"], "after", {y}"#),
+            ("<title>a {</title><p/>", r#"<title>["a {"], <p>[]"#),
+            ("<textarea>{a}{b c d</textarea>z", r#"<textarea>[{a}, "{b c d"], "z""#),
+            ("<title>{1 +}</title>z", r#"<title>["{1 +}"], "z""#),
+        ];
+        for (source, expected) in cases {
+            let (body, errors) = parse_summary(source);
+            assert_eq!(body, expected, "{source:?}");
+            assert_eq!(errors.len(), 1, "{source:?}: {errors:?}");
+        }
+        let (_, errors) = parse_summary("<title>{x</title>");
+        assert_eq!(errors, ["Expected `}` but found `</title`"]);
+    }
+
+    #[test]
+    fn parse_astro_template_expression_fragment_span() {
+        // The fragment synthesized for an expression's template children spans the
+        // inside of the braces.
+        let allocator = Allocator::default();
+        let source = "<p>{<b/>{a}text}</p>";
+        let ret = Parser::new(&allocator, source, SourceType::astro()).parse_astro();
+        assert!(ret.errors.is_empty(), "{:?}", ret.errors);
+        let JSXChild::Element(p) = &ret.root.body[0] else { panic!("expected <p>") };
+        let JSXChild::ExpressionContainer(container) = &p.children[0] else {
+            panic!("expected a container")
+        };
+        let JSXExpression::JSXFragment(fragment) = &container.expression else {
+            panic!("expected a fragment")
+        };
+        assert_eq!(fragment.span.source_text(source), "<b/>{a}text");
+        assert_eq!(container.span.source_text(source), "{<b/>{a}text}");
+    }
+
+    #[test]
+    fn parse_astro_bogus_closing_tag_inside_element_is_skipped() {
+        let cases = [
+            ("<div></ 3></div>after", r#"<div>[], "after""#),
+            ("<div><p></ 3>a</p></div>after", r#"<div>[<p>["a"]], "after""#),
+            ("<div>a</\"x>b</div>", r#"<div>["a", "b"]"#),
+        ];
+        for (source, expected) in cases {
+            let (body, errors) = parse_summary(source);
+            assert_eq!(body, expected, "{source:?}");
+            assert_eq!(errors.len(), 1, "{source:?}: {errors:?}");
+        }
+        // Whitespace before a tag name still makes a closing tag.
+        assert_parses_to("<div>a</ div>b", r#"<div>["a"], "b""#);
+    }
+
+    /// Collects the statement count of every `<script>` program.
+    #[derive(Default)]
+    struct ScriptFinder {
+        statement_counts: std::vec::Vec<usize>,
+    }
+
+    impl<'a> oxc_ast_visit::Visit<'a> for ScriptFinder {
+        fn visit_astro_script(&mut self, script: &oxc_ast::ast::AstroScript<'a>) {
+            self.statement_counts.push(script.program.body.len());
         }
     }
 }

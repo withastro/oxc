@@ -22,6 +22,7 @@ doctest = false
 [dependencies]
 oxc_allocator = { workspace = true }
 oxc_ast = { workspace = true }
+oxc_ast_visit = { workspace = true, optional = true }
 oxc_data_structures = { workspace = true, features = ["assert_unchecked"] }
 oxc_diagnostics = { workspace = true }
 oxc_ecmascript = { workspace = true }
@@ -48,6 +49,6 @@ default = ["regular_expression", "astro"]
 # Parse regex
 regular_expression = ["dep:oxc_regular_expression"]
 # Support for parsing Astro files (.astro)
-astro = []
+astro = ["dep:oxc_ast_visit"]
 # Expose Lexer for benchmarks
 benchmarking = []
